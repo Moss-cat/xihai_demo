@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 嘻嗨校园</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0e131f;--panel:#171f31;--panel2:#1e2942;--line:#2a3652;--txt:#e8edf7;--sub:#8ea0c0;--accent:#4f8cff;--danger:#ff5d6c;--ok:#39c98e;
+}
+body{background:var(--bg);color:var(--txt);font-family:"Microsoft YaHei",system-ui,sans-serif;height:100vh;overflow:hidden}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:8px;padding:7px 14px;font-size:14px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.45;cursor:not-allowed}
+input{background:#101728;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px;font-size:14px;outline:none;width:100%}
+input:focus{border-color:var(--accent)}
+.hidden{display:none!important}
+.screen{position:fixed;inset:0;display:flex;flex-direction:column}
+/* ---------- 登录页 ---------- */
+#scr-login{flex-direction:row;background:radial-gradient(1100px 650px at 72% 18%, #182645 0%, var(--bg) 58%)}
+.login-left{flex:1.15;display:flex;flex-direction:column;justify-content:center;padding:6vh 5vw;position:relative;overflow:hidden}
+.login-left .biglogo{font-size:52px;margin-bottom:16px;filter:drop-shadow(0 6px 18px rgba(79,140,255,.35))}
+.login-left h1{font-size:34px;letter-spacing:1px}
+.login-left .slogan{color:var(--sub);font-size:15px;margin:10px 0 36px}
+.feat{display:flex;align-items:center;gap:12px;color:#c6d3ec;font-size:14px;margin-bottom:16px}
+.feat .fi{width:38px;height:38px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+.deco-card{position:absolute;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 13px;font-size:12px;color:var(--sub);display:flex;align-items:center;gap:8px;box-shadow:0 10px 30px rgba(0,0,0,.35);animation:floaty 7s ease-in-out infinite}
+.deco-card .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:none;box-shadow:0 0 8px var(--ok)}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}
+.login-right{width:min(430px,46%);display:flex;align-items:center;justify-content:center;background:var(--panel);border-left:1px solid var(--line)}
+.login-box{width:300px}
+.login-box h2{font-size:21px;margin-bottom:4px}
+.login-box .sub2{color:var(--sub);font-size:13px;margin-bottom:18px;line-height:1.6}
+/* 步骤指示器 */
+.steps{display:flex;gap:6px;margin-bottom:20px;font-size:12px}
+.steps span{flex:1;text-align:center;padding:5px 0;border-radius:6px;background:var(--panel2);color:var(--sub);border:1px solid var(--line)}
+.steps span.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.steps span.done{color:var(--ok);border-color:var(--ok)}
+/* 身份选择 */
+.roles{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.role{display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;transition:border-color .15s}
+.role:hover{border-color:var(--accent)}
+.role .ri{font-size:24px;flex:none}
+.role b{display:block;font-size:14px;margin-bottom:2px}
+.role .rd{font-size:12px;color:var(--sub)}
+/* 输入框 */
+.field{position:relative;margin-bottom:14px}
+.field .fi2{position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:14px;opacity:.6;pointer-events:none}
+.field input{padding-left:34px}
+.field .eye{position:absolute;right:5px;top:50%;transform:translateY(-50%);border:none;background:none;padding:4px 7px;font-size:14px;color:var(--sub)}
+.field .eye:hover{color:var(--txt)}
+#loginBtn{width:100%;margin-top:6px;height:42px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .2s}
+#loginBtn .spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+#loginBtn.ok{background:var(--ok);border-color:var(--ok)}
+#loginStatus{min-height:36px;font-size:13px;line-height:1.5;margin-top:12px;text-align:center}
+#loginStatus.err{color:var(--danger)}
+#loginStatus.load{color:var(--sub)}
+.login-box.shake{animation:shake .4s}
+@keyframes shake{0%,100%{transform:none}20%,60%{transform:translateX(-9px)}40%,80%{transform:translateX(9px)}}
+.hint{color:var(--sub);font-size:12px;line-height:1.7;margin-top:14px}
+.backlink{display:inline-block;margin-top:12px;font-size:12px;color:var(--sub);cursor:pointer;border:none;background:none;padding:4px 0}
+.backlink:hover{color:var(--txt)}
+/* ---------- 创建学校确认弹窗 ---------- */
+#createModal{position:fixed;inset:0;background:rgba(5,8,15,.72);z-index:150;display:flex;align-items:center;justify-content:center}
+#createModal .modal-card{width:340px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:0 18px 60px rgba(0,0,0,.6)}
+#createModal h3{font-size:17px;margin-bottom:10px}
+#createModal p{font-size:13px;line-height:1.8;margin-bottom:6px}
+#createModal .btns{display:flex;gap:10px;margin-top:16px}
+#createModal .btns button{flex:1;padding:9px 0}
+@media(max-width:820px){#scr-login{flex-direction:column}.login-left{display:none}.login-right{width:100%;border-left:none}}
+/* ---------- 弹窗 ---------- */
+#toasts{position:fixed;top:14px;right:14px;z-index:100;width:320px;display:flex;flex-direction:column;gap:10px}
+.toast{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.5);animation:slidein .25s ease}
+.toast.warn{border-left-color:var(--danger)}
+.toast.ok{border-left-color:var(--ok)}
+.toast .tt{margin-bottom:8px;line-height:1.5}
+@keyframes slidein{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
+</style>
+</head>
+<body>
+<div id="toasts"></div>
+
+<!-- 教师创建学校：确认弹窗 -->
+<div id="createModal" class="hidden">
+  <div class="modal-card">
+    <h3>🏫 创建学校</h3>
+    <p>学校「<b id="cmSchool"></b>」尚未被任何人创建。</p>
+    <p>确认创建后，你将成为该校的<b>管理员</b>，可随意增加教师 / 学生 / 家长账号。</p>
+    <div class="btns">
+      <button id="cmOk" class="primary">✓ 确认创建</button>
+      <button id="cmNo">取消</button>
+    </div>
+  </div>
+</div>
+
+<div id="scr-login" class="screen">
+  <div class="login-left">
+    <div class="biglogo">🏫</div>
+    <h1>嘻嗨校园</h1>
+    <p class="slogan">学校 · 老师 · 学生 · 家长，一个页面全连通</p>
+    <div class="feat"><span class="fi">🎥</span>高清视频会议 · 班级直播 / 家长会 / 在线答疑</div>
+    <div class="feat"><span class="fi">🏫</span>按学校组织：教师可创建学校并管理成员</div>
+    <div class="feat"><span class="fi">👥</span>校内加好友 · 快速会议 / 会议码 / 定时会议</div>
+    <div class="deco-card" style="top:11%;right:13%"><span class="dot"></span>王老师 · 直播授课中</div>
+    <div class="deco-card" style="bottom:15%;right:27%;animation-delay:1.6s"><span class="dot"></span>三年二班 · 家长会</div>
+    <div class="deco-card" style="bottom:33%;right:6%;animation-delay:3.2s"><span class="dot"></span>李同学 · 课堂连线</div>
+  </div>
+  <div class="login-right">
+    <div class="login-box" id="loginBox">
+      <div class="steps">
+        <span id="sp1" class="on">① 学校</span><span id="sp2">② 身份</span><span id="sp3">③ 登录</span>
+      </div>
+
+      <!-- 步骤1：学校 -->
+      <div id="st1">
+        <h2>欢迎来到嘻嗨校园</h2>
+        <p class="sub2">第一步：填写你的学校名称</p>
+        <div class="field"><span class="fi2">🏫</span><input id="schoolInput" placeholder="学校名称（2-20 字）" maxlength="20"></div>
+        <button id="st1Btn" class="primary" style="width:100%">下一步</button>
+        <p class="hint">教师填写的学校若尚未被使用，可在下一步登录时创建学校并成为管理员；学生 / 家长需学校已存在。</p>
+      </div>
+
+      <!-- 步骤2：身份 -->
+      <div id="st2" class="hidden">
+        <h2>选择你的身份</h2>
+        <p class="sub2">学校：<b id="st2School"></b></p>
+        <div class="roles">
+          <div class="role" data-role="teacher"><span class="ri">🧑‍🏫</span><span><b>教师</b><span class="rd">可创建学校并成为管理员，管理校内成员</span></span></div>
+          <div class="role" data-role="student"><span class="ri">🧑‍🎓</span><span><b>学生</b><span class="rd">加入本校，参与课堂与会议</span></span></div>
+          <div class="role" data-role="parent"><span class="ri">👪</span><span><b>家长</b><span class="rd">加入本校，参加家长会与沟通</span></span></div>
+        </div>
+        <button class="backlink" id="st2Back">← 返回修改学校</button>
+      </div>
+
+      <!-- 步骤3：登录/注册 -->
+      <div id="st3" class="hidden">
+        <h2>登录 / 注册</h2>
+        <p class="sub2" id="st3Info"></p>
+        <div class="field"><span class="fi2">👤</span><input id="loginName" placeholder="用户名（2-16 位）" maxlength="16" autocomplete="username"></div>
+        <div class="field"><span class="fi2">🔒</span><input id="loginPass" type="password" placeholder="密码（4-20 位）" maxlength="20" autocomplete="current-password"><button class="eye" id="pwEye" type="button" title="显示 / 隐藏密码">👁</button></div>
+        <button id="loginBtn" class="primary">登录</button>
+        <p id="loginStatus"></p>
+        <p class="hint" id="st3Hint">用户名全局唯一；新用户名将自动注册并绑定当前学校与身份</p>
+        <button class="backlink" id="st3Back">← 返回重选学校 / 身份</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ================= 基础（与 meeting.html 共用的常量/键名必须一致） ================= */
+const APP = "vcmeet2026";
+const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ROLE_LABEL = { teacher: "教师", student: "学生", parent: "家长", admin: "管理员" };
+const LS = {
+  uid: name => localStorage.getItem(APP + "_uid_" + name),
+  setUid: (name, v) => localStorage.setItem(APP + "_uid_" + name, v),
+  /* 设备号：每台浏览器一个，跨设备登录同一账号时用于区分设备 */
+  devid: () => {
+    let v = localStorage.getItem(APP + "_devid");
+    if (!v) { v = Math.random().toString(36).slice(2, 10); localStorage.setItem(APP + "_devid", v); }
+    return v;
+  },
+  user: () => localStorage.getItem(APP + "_user") || "",
+  setUser: v => localStorage.setItem(APP + "_user", v),
+  session: () => { try { return JSON.parse(localStorage.getItem(APP + "_session") || "null"); } catch (e) { return null; } },
+  setSession: v => localStorage.setItem(APP + "_session", JSON.stringify(v)),
+  clearSession: () => localStorage.removeItem(APP + "_session")
+};
+
+let client = null;
+let me = { uid: "", name: "" };
+let authDone = false;
+let loginPwHash = "";
+let authRecord = null;   // MQTT 上该用户名的注册记录（retained）
+let schoolRecord = null; // MQTT 上该学校的记录（retained）
+let regSchool = "";      // 第一步填写的学校
+let regRole = "";        // 第二步选择的身份：teacher / student / parent
+
+/* 密码哈希：安全环境用 SHA-256，非安全环境（如 file://）降级为多轮 FNV 混合哈希 */
+async function hashPw(name, pw) {
+  const src = APP + "|" + name + "|" + pw;
+  if (window.isSecureContext && window.crypto && crypto.subtle) {
+    try {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(src));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+    } catch (e) { /* 落入降级 */ }
+  }
+  let h = [0x811c9dc5, 0x01000193, 0xdeadbeef, 0x41c6ce57];
+  for (let r = 0; r < 16; r++) {
+    for (let i = 0; i < src.length; i++) {
+      const c = src.charCodeAt(i) + r * 131;
+      h[0] = Math.imul(h[0] ^ c, 16777619) >>> 0;
+      h[1] = Math.imul(h[1] + c, 2246822519) >>> 0;
+      h[2] = (h[2] ^ Math.imul(c + i, 2654435761)) >>> 0;
+      h[3] = (Math.imul(h[3] + c, 668265263) ^ r) >>> 0;
+    }
+  }
+  return h.map(x => x.toString(16).padStart(8, "0")).join("");
+}
+
+function toast(text, kind = "", ms = 4200) {
+  const d = document.createElement("div");
+  d.className = "toast " + kind;
+  d.innerHTML = `<div class="tt">${text}</div>`;
+  $("toasts").appendChild(d);
+  if (ms > 0) setTimeout(() => d.remove(), ms);
+  return d;
+}
+
+/* ================= 三步流程 ================= */
+function goStep(n) {
+  ["st1", "st2", "st3"].forEach((id, i) => $(id).classList.toggle("hidden", i + 1 !== n));
+  [1, 2, 3].forEach(i => {
+    const sp = $("sp" + i);
+    sp.className = i < n ? "done" : (i === n ? "on" : "");
+  });
+}
+$("st1Btn").onclick = () => {
+  const s = $("schoolInput").value.trim();
+  if (s.length < 2) { toast("学校名称至少 2 个字符", "warn"); return; }
+  if (!/^[\w\u4e00-\u9fa5-]{2,20}$/.test(s)) { toast("学校名称只能包含中文、字母、数字、下划线、连字符", "warn"); return; }
+  regSchool = s;
+  $("st2School").textContent = s;
+  goStep(2);
+};
+$("schoolInput").addEventListener("keydown", e => { if (e.key === "Enter") $("st1Btn").click(); });
+$("st2Back").onclick = () => goStep(1);
+document.querySelectorAll(".role").forEach(el => {
+  el.onclick = () => {
+    regRole = el.dataset.role;
+    $("st3Info").innerHTML = `学校：<b>${esc(regSchool)}</b> · 身份：<b>${ROLE_LABEL[regRole]}</b>`;
+    $("st3Hint").innerHTML = regRole === "teacher"
+      ? "新用户名自动注册；若学校「" + esc(regSchool) + "」尚未被使用，将<b>弹窗确认创建学校</b>，确认后你成为管理员"
+      : "用户名全局唯一；新用户名将自动注册并绑定当前学校与身份。学校需已由教师创建。";
+    goStep(3);
+    setTimeout(() => $("loginName").focus(), 50);
+  };
+});
+$("st3Back").onclick = () => { loginIdle(); goStep(2); };
+
+/* ================= 登录页状态 ================= */
+function loginIdle() {
+  const b = $("loginBtn");
+  b.disabled = false; b.classList.remove("ok"); b.textContent = "登录";
+  $("loginStatus").textContent = ""; $("loginStatus").className = "";
+}
+function loginLoading(msg) {
+  const b = $("loginBtn");
+  b.disabled = true; b.classList.remove("ok");
+  b.innerHTML = '<span class="spin"></span>' + esc(msg);
+  const s = $("loginStatus"); s.className = "load"; s.textContent = msg;
+}
+function loginError(msg) {
+  loginIdle();
+  const s = $("loginStatus"); s.className = "err"; s.innerHTML = msg;
+  const box = $("loginBox");
+  box.classList.remove("shake"); void box.offsetWidth; box.classList.add("shake");
+}
+function loginSuccess(school, role) {
+  const b = $("loginBtn");
+  b.disabled = true; b.classList.add("ok"); b.textContent = "✓ 登录成功，正在进入…";
+  const s = $("loginStatus");
+  s.className = ""; s.textContent = "欢迎，" + me.name + "（" + school + " · " + ROLE_LABEL[role] + "）";
+}
+$("pwEye").onclick = () => {
+  const p = $("loginPass");
+  p.type = p.type === "password" ? "text" : "password";
+  $("pwEye").textContent = p.type === "password" ? "👁" : "🙈";
+};
+
+/* ================= 登录流程 ================= */
+$("loginBtn").onclick = async () => {
+  const n = $("loginName").value.trim();
+  const pw = $("loginPass").value;
+  if (n.length < 2) { loginError("用户名至少 2 个字符"); return; }
+  if (!/^[\w\u4e00-\u9fa5-]{2,16}$/.test(n)) { loginError("用户名只能包含中文、字母、数字、下划线、连字符"); return; }
+  if (pw.length < 4 || pw.length > 20) { loginError("密码需要 4-20 位"); return; }
+  loginLoading("正在连接服务器…");
+  me = { uid: "", name: n };
+  LS.setUser(n);
+  loginPwHash = await hashPw(n, pw);
+  authDone = false; authRecord = null; schoolRecord = null;
+  client = mqtt.connect(BROKER, {
+    clientId: APP + "_login_" + LS.devid() + "_" + Math.random().toString(36).slice(2, 6),
+    keepalive: 30, clean: true, connectTimeout: 8000
+  });
+  client.on("error", () => {
+    if (!authDone) { authDone = true; loginError("无法连接服务器，请检查网络后重试"); }
+  });
+  client.on("connect", () => {
+    client.subscribe(`${APP}/auth/${me.name}`);      // 注册记录（retained）
+    client.subscribe(`${APP}/school/${regSchool}`);  // 学校记录（retained）：存在性判断
+    setTimeout(() => { if (!authDone) { authDone = true; doAuth(); } }, 1400);
+  });
+  client.on("message", (topic, payload) => {
+    const raw = payload.toString();
+    if (topic === `${APP}/auth/${me.name}`) {
+      try { const m = JSON.parse(raw); if (m && m.ph) authRecord = m; } catch (e) {}
+    } else if (topic === `${APP}/school/${regSchool}`) {
+      try { const m = JSON.parse(raw); if (m && m.name) schoolRecord = m; else schoolRecord = null; } catch (e) { schoolRecord = null; }
+    }
+  });
+};
+
+/* 认证/注册主逻辑 */
+function doAuth() {
+  if (authRecord) {
+    /* ---- 已注册：登录 ---- */
+    if (authRecord.ph !== loginPwHash) {
+      client.end(true);
+      $("loginPass").value = ""; $("loginPass").focus();
+      loginError("密码错误，登录失败");
+      return;
+    }
+    /* 学校绑定校验：账号属于其他学校则拒绝 */
+    if (authRecord.school && authRecord.school !== regSchool) {
+      client.end(true);
+      loginError(`该账号属于学校「${esc(authRecord.school)}」，请返回第一步填写正确的学校`);
+      return;
+    }
+    /* 身份校验：账号身份与所选不符则拒绝（管理员选"教师"登录视为一致） */
+    if (authRecord.role && authRecord.role !== regRole && !(authRecord.role === "admin" && regRole === "teacher")) {
+      client.end(true);
+      loginError(`该账号身份是「${ROLE_LABEL[authRecord.role]}」，请返回第二步选择正确身份`);
+      return;
+    }
+    /* 老账号记录里没有 uid / school / role：补写（绑定当前学校与身份） */
+    me.uid = authRecord.uid || LS.uid(me.name) || Math.random().toString(36).slice(2, 12);
+    const finalRole = authRecord.role || regRole;
+    if (!authRecord.uid || !authRecord.school || !authRecord.role) {
+      client.publish(`${APP}/auth/${me.name}`, JSON.stringify({
+        ph: authRecord.ph, reg: authRecord.reg || Date.now(), uid: me.uid,
+        school: authRecord.school || regSchool, role: finalRole
+      }), { retain: true, qos: 1 });
+    }
+    finishLogin(authRecord.school || regSchool, finalRole);
+  } else {
+    /* ---- 未注册：注册 ---- */
+    if (!schoolRecord) {
+      if (regRole === "teacher") { showCreateModal(); return; } // 教师可创建学校
+      client.end(true);
+      loginError(`学校「${esc(regSchool)}」不存在，请检查名称；学校需先由教师创建`);
+      return;
+    }
+    /* 学校已存在：以所选身份注册，并把自己加入学校成员名单 */
+    me.uid = Math.random().toString(36).slice(2, 12);
+    client.publish(`${APP}/auth/${me.name}`, JSON.stringify({
+      ph: loginPwHash, reg: Date.now(), uid: me.uid, school: regSchool, role: regRole
+    }), { retain: true, qos: 1 });
+    const members = ((schoolRecord.members) || []).filter(x => x.name !== me.name);
+    members.push({ name: me.name, role: regRole });
+    client.publish(`${APP}/school/${regSchool}`, JSON.stringify({
+      name: regSchool, creator: schoolRecord.creator, createdAt: schoolRecord.createdAt || Date.now(), members
+    }), { retain: true, qos: 1 });
+    toast("用户名 <b>" + esc(me.name) + "</b> 注册成功，请记住密码", "ok", 6000);
+    finishLogin(regSchool, regRole);
+  }
+}
+
+/* 教师创建学校：确认弹窗 */
+function showCreateModal() {
+  $("cmSchool").textContent = regSchool;
+  $("createModal").classList.remove("hidden");
+  const b = $("loginBtn");
+  b.disabled = true; b.textContent = "等待确认…";
+  const s = $("loginStatus"); s.className = "load"; s.textContent = "学校「" + regSchool + "」未被使用，可创建";
+}
+$("cmOk").onclick = () => {
+  $("createModal").classList.add("hidden");
+  me.uid = Math.random().toString(36).slice(2, 12);
+  /* 注册账号：管理员身份 */
+  client.publish(`${APP}/auth/${me.name}`, JSON.stringify({
+    ph: loginPwHash, reg: Date.now(), uid: me.uid, school: regSchool, role: "admin"
+  }), { retain: true, qos: 1 });
+  /* 创建学校记录：创建者=我，成员名单含我 */
+  client.publish(`${APP}/school/${regSchool}`, JSON.stringify({
+    name: regSchool, creator: me.name, createdAt: Date.now(), members: [{ name: me.name, role: "admin" }]
+  }), { retain: true, qos: 1 });
+  toast("学校「<b>" + esc(regSchool) + "</b>」创建成功！你已成为该校管理员，可在会议页随意增加教师 / 学生", "ok", 8000);
+  finishLogin(regSchool, "admin");
+};
+$("cmNo").onclick = () => {
+  $("createModal").classList.add("hidden");
+  try { client.end(true); } catch (e) {}
+  loginIdle();
+  $("loginStatus").className = "load"; $("loginStatus").textContent = "已取消创建学校";
+};
+
+/* 认证通过：写会话（meeting.html 读取），断开连接，跳转 */
+function finishLogin(school, role) {
+  LS.setUid(me.name, me.uid);
+  LS.setSession({ name: me.name, uid: me.uid, devid: LS.devid(), school, role, at: Date.now() });
+  loginSuccess(school, role);
+  setTimeout(() => {
+    try { client.end(true); } catch (e) {}
+    location.href = "meeting.html";
+  }, 1000);
+}
+
+$("loginName").addEventListener("keydown", e => { if (e.key === "Enter") $("loginPass").focus(); });
+$("loginPass").addEventListener("keydown", e => { if (e.key === "Enter") $("loginBtn").click(); });
+
+/* 已有会话直接跳过登录 */
+(function () {
+  const s = LS.session();
+  if (s && s.name && s.uid) { location.replace("meeting.html"); return; }
+  const u = LS.user();
+  if (u) { $("loginName").value = u; }
+  $("schoolInput").focus();
+})();
+</script>
+</body>
+</html>
