@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>嘻嗨校园</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="core.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root,[data-theme="light"]{--bg:#eef1f8;--panel:#ffffff;--panel2:#eaf0fb;--line:#d4dcee;--txt:#1b2340;--sub:#5b6a90;--accent:#4f8cff;--danger:#ff5d6c;--ok:#2fbf8f;--warn:#e08a2e}
+[data-theme="dark"]{--bg:#0b101c;--panel:#141c2e;--panel2:#1d2740;--line:#29365a;--txt:#e9eef8;--sub:#8da0c4;--accent:#4f8cff;--danger:#ff5d6c;--ok:#2fbf8f;--warn:#e8a13c}
+body{background:var(--bg);color:var(--txt);font-family:"Microsoft YaHei",system-ui,sans-serif;height:100vh;overflow:hidden}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:8px;padding:7px 14px;font-size:14px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+button.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+button.ghost{background:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px;font-size:14px;outline:none;width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+textarea{resize:vertical;font-family:inherit}
+.hidden{display:none!important}
+.muted{color:var(--sub);font-size:12px}
+.screen{position:fixed;inset:0;display:flex;flex-direction:column}
+header.top{display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+header.top .logo{font-weight:bold;font-size:16px}
+header.top .who{color:var(--sub);font-size:12px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+header.top .grow{flex:1}
+header.top select{width:auto;padding:4px 8px;font-size:12px;background:var(--panel2)}
+.main-grid{flex:1;display:grid;grid-template-columns:272px 1fr;overflow:hidden}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:14px;overflow-y:auto}
+aside h3{font-size:13px;margin:16px 0 8px;color:var(--sub)}
+aside h3:first-child{margin-top:0}
+.row{display:flex;gap:8px}
+.row input{flex:1}
+ul.plain{list-style:none}
+li.friend{display:flex;align-items:center;gap:9px;padding:8px 9px;background:var(--panel2);border-radius:8px;margin-bottom:6px;font-size:13px}
+li.friend .fname{flex:1;word-break:break-all}
+li.friend button{padding:3px 8px;font-size:12px;flex:none}
+.dot{width:9px;height:9px;border-radius:50%;background:#4a5a80;flex:none}
+.dot.on{background:var(--ok)}
+.navbtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);margin-bottom:8px;font-size:14px}
+.navbtn:hover{border-color:var(--accent)}
+.navbtn .ico{font-size:19px}
+.navbtn b{display:block;font-size:14px}
+.navbtn span{font-size:12px;color:var(--sub);display:block}
+main{padding:18px 20px;overflow-y:auto}
+.tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.tabs button{border-radius:999px;padding:8px 17px}
+.tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+.card h3{font-size:15px;margin-bottom:12px}
+.card h3 .sub{font-weight:normal;font-size:12px;color:var(--sub)}
+.card input,.card select,.card textarea{margin-bottom:10px}
+.empty{color:var(--sub);font-size:13px;padding:6px 0}
+/* 班级群 / 群聊 */
+.chatbox{display:flex;flex-direction:column;height:min(58vh,560px);background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.chatlog{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:76%;align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 11px;font-size:13px;word-break:break-word}
+.msg.mine{align-self:flex-end;background:rgba(79,140,255,.14);border-color:rgba(79,140,255,.4)}
+.msg .mname{font-size:11px;color:var(--sub);margin-bottom:3px}
+.msg .mt{font-size:11px;color:var(--sub);margin-top:4px;text-align:right}
+.msg.call{border-left:4px solid var(--accent);max-width:92%;align-self:center;width:100%}
+.msg.call .cbtns{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+/* 班级广播：老师发到全班学生+家长的媒体消息 */
+.msg.bc{max-width:92%;align-self:center;width:100%;border-left:4px solid #f0b400;background:rgba(240,180,0,.06)}
+.msg.bc .mname{color:#c89200;font-weight:600}
+.msg.bc .bcimgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-top:6px}
+.msg.bc .bcimgs img{width:100%;height:120px;object-fit:cover;border-radius:6px;cursor:zoom-in;background:#0001}
+.msg.bc .bctext{margin-top:6px;white-space:pre-wrap;line-height:1.5}
+.bc-prev{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px;margin-top:8px}
+.bc-prev .pp{position:relative;border-radius:6px;overflow:hidden;background:var(--line);aspect-ratio:1/1}
+.bc-prev .pp img{width:100%;height:100%;object-fit:cover;display:block}
+.bc-prev .pp button{position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,.6);color:#fff;cursor:pointer;font-size:14px;line-height:1}
+.bc-prev .pp .vtag{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.62);color:#fff;font-size:11px;text-align:center;padding:2px 0}
+.msg.bc{border-left:4px solid #e08a2e;background:linear-gradient(135deg,rgba(224,138,46,.07),transparent)}
+.msg.bc .bchead{font-weight:600;margin-bottom:4px}
+.msg.bc .bcimgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:5px;margin-top:6px}
+.msg.bc .bcimgs img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:6px;cursor:zoom-in;display:block}
+.msg.bc video.bcvid{width:100%;max-width:340px;border-radius:8px;margin-top:6px;display:block;background:#000}
+.chatinput{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line)}
+.chatinput input{flex:1;margin:0}
+.memberchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.mchip{display:flex;align-items:center;gap:6px;font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 11px}
+.mchip .d{width:7px;height:7px;border-radius:50%;background:#4a5a80}
+.mchip .d.on{background:var(--ok)}
+.mchip.hl{border-color:var(--accent)}
+/* 学院分 */
+.pt-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.pt-row select,.pt-row input{width:auto;margin:0;flex:1;min-width:120px}
+.pt-btns{display:flex;gap:8px;margin-bottom:10px}
+.pt-btns button{flex:1}
+.pt-rank{width:100%;border-collapse:collapse;font-size:13px}
+.pt-rank td,.pt-rank th{border:1px solid var(--line);padding:7px 10px;text-align:left}
+.pt-rank th{background:var(--panel2);font-weight:normal;color:var(--sub)}
+.pt-rank tr.me td{background:rgba(79,140,255,.13)}
+.pitem{display:flex;align-items:center;gap:8px;background:var(--panel2);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:13px;flex-wrap:wrap}
+.pitem .n{flex:1;min-width:100px;word-break:break-all}
+.pitem .muted{flex:1;min-width:120px}
+.pitem button{padding:3px 9px;font-size:12px;flex:none}
+.dropzone{border:2px dashed var(--line);border-radius:12px;padding:14px;text-align:center;font-size:13px;line-height:1.9;margin-bottom:10px;cursor:pointer}
+.dropzone:hover,.dropzone.drag{border-color:var(--accent);background:var(--panel2)}
+.sched-item{background:var(--panel2);border-radius:10px;padding:12px;margin-bottom:10px;font-size:13px}
+.sched-item .st{font-size:12px;margin-bottom:6px;line-height:1.8}
+.st b{padding:2px 8px;border-radius:6px;font-weight:normal}
+.st b.p{background:#33415f;color:#a9c1ff}.st b.j{background:#1e4d3a;color:#7fe8bd}.st b.a{background:#5a2333;color:#ff9daa}
+.rsvp-line{display:flex;align-items:center;gap:8px;padding:6px 4px;border-top:1px dashed var(--line);flex-wrap:wrap}
+.rsvp-line .n{flex:1}
+.rsvp-line button{padding:3px 9px;font-size:12px}
+#toasts{position:fixed;top:14px;right:14px;z-index:100;width:320px;display:flex;flex-direction:column;gap:10px}
+.toast{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.5);animation:slidein .25s ease;z-index:101}
+.toast.warn{border-left-color:var(--danger)}
+.toast.ok{border-left-color:var(--ok)}
+.toast .tt{line-height:1.5;word-break:break-word}
+.toast .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.toast .btns button{padding:5px 10px;font-size:12px}
+.toast textarea{width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px;font-size:12px;resize:vertical;min-height:52px;font-family:inherit}
+@keyframes slidein{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
+#gateOverlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+@media(max-width:900px){.main-grid{grid-template-columns:1fr}aside{display:none}}
+</style>
+</head>
+<body>
+<div id="toasts"></div>
+<div id="gateOverlay" class="hidden"><b style="font-size:18px">请先登录</b><p class="muted">正在跳转到登录页…</p></div>
+<div id="scr-main" class="screen hidden">
+  <header class="top">
+    <span class="logo">🏫 嘻嗨校园</span>
+    <span class="who" id="myNameLabel"></span>
+    <span class="grow"></span>
+    <span class="who" id="connState">连接中…</span>
+    <select id="themeSel" title="主题"><option value="auto">🌓 跟随时间</option><option value="dark">🌙 深色</option><option value="light">☀ 浅色</option></select>
+    <select id="langSel" title="语言"><option value="zh">中文</option><option value="en">English</option></select>
+    <button id="logoutBtn" class="ghost">切换账号</button>
+  </header>
+  <div class="main-grid">
+    <aside>
+      <h3>群组</h3>
+      <button id="navClass" class="navbtn hidden"><span class="ico">🏫</span><span><b data-t="nav.class">我的班级群</b><span id="navClassSub"></span></span></button>
+      <button id="navCouncil" class="navbtn hidden"><span class="ico">⭐</span><span><b>学生会群</b><span>成员发起会议 · 管理员审批</span></span></button>
+      <h3>好友</h3>
+      <div class="row"><input id="friendName" placeholder="用户名" maxlength="16"><button id="addFriendBtn" class="primary">添加</button></div>
+      <div style="height:8px"></div>
+      <ul class="plain" id="friendList"></ul>
+      <h3>收到的好友申请</h3>
+      <ul class="plain" id="reqList"></ul>
+    </aside>
+    <main>
+      <div class="tabs" id="tabbar">
+        <button data-tab="meet" id="tbMeet" class="on" data-t="tab.meet">🎥 视频通话</button>
+        <button data-tab="class" id="tbClass" class="hidden" data-t="tab.class">🏫 班级群</button>
+        <button data-tab="broadcast" id="tbBroadcast" class="hidden" data-t="tab.broadcast">📢 班级广播</button>
+        <button data-tab="parent" id="tbParent" class="hidden" data-t="tab.parent">👪 家长群</button>
+        <button data-tab="prq" id="tbPrq" class="hidden" data-t="tab.prq">📨 家长消息</button>
+        <button data-tab="points" id="tbPoints" class="hidden" data-t="tab.points">⭐ 学院分</button>
+        <button data-tab="grades" id="tbGrades" class="hidden" data-t="tab.grades">📈 成绩</button>
+        <button data-tab="tt" id="tbTt" class="hidden" data-t="tab.tt">📅 课表</button>
+        <button data-tab="stu" id="tbStu" class="hidden" data-t="tab.stu">👥 学生管理</button>
+        <button data-tab="school" id="tbSchool" class="hidden" data-t="tab.school">🏫 学校管理</button>
+      </div>
+      <!-- 视频通话 -->
+      <div id="tabMeet">
+        <div class="card">
+          <h3 data-t="meet.join">🔑 加入会议</h3>
+          <div class="row"><input id="joinCode" placeholder="会议码（6 位数字）" maxlength="6" inputmode="numeric"><button id="joinBtn" class="primary">申请加入</button></div>
+          <p class="muted">凭会议码加入需主持人批准；被好友邀请进入则无需批准。</p>
+        </div>
+        <div class="card">
+          <h3 data-t="meet.quick">⚡ 快速创建（立即会议）</h3>
+          <input id="quickTitle" placeholder="会议标题（可选）" maxlength="30">
+          <button id="quickBtn" class="primary">立即创建并进入</button>
+          <p class="muted">进入后可邀请 / 强拉好友；好友申请进入需你批准。</p>
+        </div>
+        <div class="card">
+          <h3>⏰ 定时创建（一周内）</h3>
+          <input id="schedTitle" placeholder="会议标题" maxlength="30">
+          <input id="schedTime" type="datetime-local">
+          <button id="schedBtn" class="primary">预 定</button>
+          <p class="muted">好友需提前预定（RSVP）；到点自动开启，已预定者打开本页面即自动入会；超 30 分钟未入会记为缺席。</p>
+        </div>
+        <div class="card">
+          <h3>📋 我的定时会议</h3>
+          <div id="schedList"></div>
+        </div>
+      </div>
+      <!-- 班级群 -->
+      <div id="tabClass" class="hidden">
+        <div class="card">
+          <h3>🏫 <span id="clsTitle"></span> <span class="sub" id="clsSub"></span></h3>
+          <div class="memberchips" id="clsMembers"></div>
+          <div class="chatbox">
+            <div class="chatlog" id="clsLog"></div>
+            <div class="chatinput">
+              <button id="clsEmoji" class="ghost" title="表情">😊</button>
+              <button id="clsGif" class="ghost" title="GIF 表情包">🎬</button>
+              <input id="clsMsg" placeholder="发消息给本班同学…（输入 @ 可提醒成员，可直接粘贴图片）" maxlength="500">
+              <button id="clsSend" class="primary">发送</button>
+              <button id="clsStartMeet" class="ok hidden">🔴 开始班级会议</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 班级广播（班主任/管理员 → 全班学生 + 全班家长） -->
+      <div id="tabBroadcast" class="hidden">
+        <div class="card">
+          <h3>📢 班级广播 <span class="sub">（一次发送，本班学生 + 全体家长全部收到）</span></h3>
+          <div class="pt-row">
+            <select id="bcClass" style="flex:none;width:auto"></select>
+            <span class="muted" id="bcHint" style="flex:1"></span>
+          </div>
+          <textarea id="bcText" placeholder="配文（选填，可写文字说明，也可粘贴视频链接）" maxlength="600" rows="3" style="width:100%;resize:vertical"></textarea>
+          <div class="pt-row" style="margin-top:8px;flex-wrap:wrap">
+            <input type="file" id="bcFile" accept="image/gif,image/png,image/webp,image/jpeg" multiple style="display:none">
+            <input type="file" id="bcVid" accept="video/mp4,video/webm,video/quicktime" style="display:none">
+            <button id="bcPickBtn" class="ghost" style="flex:none">🖼 添加图片（≤9 张，自动压缩）</button>
+            <button id="bcVidBtn" class="ghost" style="flex:none">🎬 添加视频（≤2 个，单个 ≤ 15MB）</button>
+            <span class="muted" id="bcSizeNote" style="flex:1"></span>
+            <button id="bcSendBtn" class="primary" style="flex:none">📢 发送广播</button>
+          </div>
+          <div class="bc-prev" id="bcPreviews"></div>
+          <p class="muted">广播实时送达在线的本班学生和家长（班级群 + 家长群同时显示）。GIF 动图保持原样不压缩；视频较大时发送需要一点时间，请耐心等待发送完成提示。</p>
+        </div>
+        <div class="card">
+          <h3>📜 我发过的广播</h3>
+          <div id="bcHistory"></div>
+        </div>
+      </div>
+      <div id="tabParent" class="hidden">
+        <div class="card">
+          <h3>👪 <span id="pcTitle"></span>家长群 <span class="sub" id="pcSub"></span></h3>
+          <div class="memberchips" id="pcMembers"></div>
+          <div class="chatbox">
+            <div class="chatlog" id="pcLog"></div>
+            <div class="chatinput">
+              <button id="pcEmoji" class="ghost" title="表情">😊</button>
+              <button id="pcGif" class="ghost" title="GIF 表情包">🎬</button>
+              <input id="pcMsg" placeholder="发消息给本班家长…（输入 @ 可提醒家长，可直接粘贴图片）" maxlength="500">
+              <button id="pcSend" class="primary">发送</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>📨 给班主任发消息 <span class="sub">（请假 / 退学申请等）</span></h3>
+          <div class="pt-row">
+            <select id="prKind" style="flex:none;width:auto">
+              <option value="请假">请假</option>
+              <option value="退学申请">退学申请</option>
+              <option value="咨询">咨询</option>
+              <option value="其他">其他</option>
+            </select>
+            <input id="prText" placeholder="说明内容（如：孩子明天发烧，请假一天）" maxlength="300">
+            <button id="prSend" class="primary" style="flex:none">发送</button>
+          </div>
+          <p class="muted">发送后班主任会在「家长消息」中收到申请；批复结果会以消息通知你。</p>
+        </div>
+      </div>
+      <!-- 家长消息（班主任专属） -->
+      <div id="tabPrq" class="hidden">
+        <div class="card">
+          <h3>📨 家长消息 <span class="sub">（请假 / 退学等申请）</span></h3>
+          <div id="prqList"></div>
+        </div>
+      </div>
+      <!-- 学院分 -->
+      <div id="tabPoints" class="hidden">
+        <div class="card" id="ptAddCard">
+          <h3>➕ 给学生加 / 扣学院分</h3>
+          <div class="pt-row">
+            <select id="ptStudent"></select>
+            <input id="ptReason" placeholder="理由（必填，如：课堂表现优秀）" maxlength="60">
+          </div>
+          <div class="pt-btns">
+            <button data-pt="5" class="ok">+5</button><button data-pt="2" class="ok">+2</button><button data-pt="1">+1</button>
+            <button data-pt="-1">-1</button><button data-pt="-2" class="danger">-2</button><button data-pt="-5" class="danger">-5</button>
+          </div>
+          <div class="pt-row">
+            <input id="ptCustom" placeholder="自选分值（非零整数，可为负，如 3 / -8）" inputmode="numeric" maxlength="5">
+            <button id="ptCustomBtn" class="primary" style="flex:none">自选分值加 / 扣</button>
+          </div>
+          <p class="muted">说明：可点击固定分值，也可输入<b>自选分值</b>（正数加分、负数扣分，每次需填理由）；每次操作都会记录“谁 + 理由”。</p>
+        </div>
+        <div class="card">
+          <h3>🏆 班级学院分排行榜 <span class="sub" id="ptClassNote"></span></h3>
+          <table class="pt-rank" id="ptRankClass"></table>
+        </div>
+        <div class="card">
+          <h3>📊 全校排行榜（前 30）</h3>
+          <table class="pt-rank" id="ptRankAll"></table>
+        </div>
+        <div class="card">
+          <h3>📜 最近加分记录</h3>
+          <div id="ptHist"></div>
+        </div>
+      </div>
+      <!-- 成绩（学生/家长查看 · 教师录入） -->
+      <div id="tabGrades" class="hidden">
+        <div class="card" id="grAddCard">
+          <h3>✏️ 成绩录入 <span class="sub">（科目 + 分数 + E/M/D/B 等级）</span></h3>
+          <div class="pt-row">
+            <select id="grStudent"></select>
+            <input id="grSubject" list="grSubList" placeholder="科目（如 数学）" maxlength="10">
+            <datalist id="grSubList">
+              <option value="语文"></option><option value="数学"></option><option value="英语"></option>
+              <option value="物理"></option><option value="化学"></option><option value="生物"></option>
+              <option value="历史"></option><option value="地理"></option><option value="道德与法治"></option>
+              <option value="体育"></option><option value="音乐"></option><option value="美术"></option><option value="信息科技"></option>
+            </datalist>
+            <input id="grScore" placeholder="分数（0-150）" inputmode="decimal" maxlength="6">
+            <select id="grLevel" style="flex:none;width:auto">
+              <option value="">等级</option><option value="E">E（最好）</option><option value="M">M（第二）</option>
+              <option value="D">D（第三）</option><option value="B">B（最差）</option>
+            </select>
+            <button id="grAdd" class="primary" style="flex:none">＋ 录入</button>
+          </div>
+          <p class="muted">等级标准：E 最好 · M 第二 · D 第三 · B 最差。录入分数后自动预选等级（E≥90 · M≥80 · D≥60 · B&lt;60），可手动修改。</p>
+        </div>
+        <div class="card" id="grSendCard">
+          <h3>📨 给家长发学况反馈 <span class="sub">（学习状况、在校表现等，家长离线也能收到）</span></h3>
+          <div class="pt-row">
+            <select id="grRepStudent"></select>
+            <input id="grRepText" placeholder="学况内容（如：近期课堂专注度明显提升，作业完成质量高）" maxlength="300">
+            <button id="grRepBtn" class="primary" style="flex:none">发送</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>📊 各科目平均分 <select id="grWho" class="hidden" style="width:auto;margin-left:6px"></select> <span class="sub" id="grStatNote"></span></h3>
+          <table class="pt-rank" id="grStatTable"></table>
+        </div>
+        <div class="card">
+          <h3>🥧 E / M / D / B 等级总占比 <span class="sub">（E 最好 → M 第二 → D 第三 → B 最差）</span></h3>
+          <div id="grPie"></div>
+        </div>
+        <div class="card">
+          <h3>📜 成绩记录 <span class="sub" id="grHistNote"></span></h3>
+          <div id="grHist"></div>
+        </div>
+        <div class="card" id="grReportCard">
+          <h3>📨 老师发来的学况反馈</h3>
+          <div id="grReports"></div>
+        </div>
+      </div>
+      <!-- 课表（教师自定义） -->
+      <div id="tabTt" class="hidden">
+        <div class="card">
+          <h3>➕ 添加课表 <span class="sub">（自己定义：星期 + 时间 + 班级 + 科目）</span></h3>
+          <div class="pt-row">
+            <select id="ttDay" style="flex:none;width:auto">
+              <option value="">星期</option><option value="1">周一</option><option value="2">周二</option>
+              <option value="3">周三</option><option value="4">周四</option><option value="5">周五</option>
+              <option value="6">周六</option><option value="7">周日</option>
+            </select>
+            <input id="ttStart" type="time" style="width:auto;flex:none">
+            <input id="ttEnd" type="time" style="width:auto;flex:none">
+            <input id="ttClass" placeholder="班级（如 6B）" maxlength="3">
+            <input id="ttSub" placeholder="科目（如 数学）" maxlength="10">
+            <button id="ttAdd" class="primary" style="flex:none">＋ 添加</button>
+          </div>
+          <p class="muted">班级格式：数字 + 字母（6B = 六年级B班，班级 A-E）。课表保存在云端，换设备登录也能看到，仅自己可见。</p>
+        </div>
+        <div class="card">
+          <h3>🗓 我的课表</h3>
+          <div id="ttList"></div>
+        </div>
+      </div>
+      <!-- 学生管理（管理员） -->
+      <div id="tabStu" class="hidden">
+        <div class="card">
+          <h3>👥 添加学生 <span class="sub">（学生不能自行注册，账号由老师在此开通；学号必填且全校唯一）</span></h3>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
+            <input id="stuName" placeholder="姓名（登录用户名）" maxlength="16">
+            <input id="stuSid" placeholder="学号（必填，家长密码=学号）" maxlength="12">
+            <select id="stuGrade">
+              <option value="">年级</option>
+              <option value="1">一年级</option><option value="2">二年级</option><option value="3">三年级</option>
+              <option value="4">四年级</option><option value="5">五年级</option><option value="6">六年级</option>
+              <option value="7">七年级</option><option value="8">八年级</option><option value="9">九年级</option>
+              <option value="10">高一</option><option value="11">高二</option><option value="12">高三</option>
+            </select>
+            <select id="stuCls">
+              <option value="">班级</option>
+              <option value="A">A班</option><option value="B">B班</option><option value="C">C班</option>
+              <option value="D">D班</option><option value="E">E班</option>
+            </select>
+            <select id="stuGender"><option value="">性别</option><option value="男">男</option><option value="女">女</option></select>
+            <input id="stuPass" type="text" placeholder="初始密码" maxlength="20">
+            <button id="addStuBtn" class="primary">＋ 添加</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>📋 学生名单</h3>
+          <div id="studentList"></div>
+        </div>
+      </div>
+      <!-- 学校管理（管理员） -->
+      <div id="tabSchool" class="hidden">
+        <div class="card">
+          <h3>🏫 学校管理 · <span id="schoolNameLabel"></span></h3>
+          <p class="muted" style="margin-bottom:12px">可创建教师 / 家长账号（学生请到「学生管理」添加），并可随时把管理员转让给其他教师。</p>
+          <div class="row">
+            <input id="newAccName" placeholder="新账号用户名（2-16 位）" maxlength="16">
+            <select id="newAccRole" style="width:auto;flex:none"><option value="teacher">教师</option><option value="parent">家长</option></select>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <input id="newAccPass" type="text" placeholder="初始密码（4-20 位）" maxlength="20">
+            <button id="newAccBtn" class="primary" style="flex:none">创建账号</button>
+          </div>
+          <h3 style="margin-top:14px">👥 学校成员（点击“转让”可将管理员交给对方）</h3>
+          <div id="schoolMembers"></div>
+        </div>
+        <div class="card">
+          <h3>📥 Excel 批量导入 <span class="sub">（把表格文件拖入对应区域，或点击区域选择文件）</span></h3>
+          <div class="dropzone" id="dropStu"><b>🧑‍🎓 学生表格</b>：拖入 .xlsx / .xls / .csv<br><span class="muted">第一列 姓名 · 第二列 学号 · 第三列 密码 · 第四列 班级（如 6B = 六年级B班，最多 E 班）</span></div>
+          <div class="dropzone" id="dropTch"><b>🧑‍🏫 教师表格</b>：拖入 .xlsx / .xls / .csv<br><span class="muted">第一列 姓名 · 第二列 班主任 / 非班主任 · 第三列 班级（班主任必填，如 6B；非班主任留空）· 第四列 密码</span></div>
+          <p class="muted">导入前会逐行校验并预览，确认无误后才会批量创建账号（家长账号不在此创建，家长自行注册）。</p>
+          <div id="batchPreview"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<script src="main.js"></script>
+</body>
+</html>
