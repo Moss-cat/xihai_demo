@@ -5,7 +5,25 @@ window.APP = "vcmeet2026";
 window.BROKER = "wss://broker.hivemq.com:8884/mqtt";
 window.ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 const $ = id => document.getElementById(id);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/* 显示名双语：页面注入 window.__ROSTER__ = [{name, fname, lname}]；
+   EN 模式下 esc()/nameOf() 把中文名映射为 "First Last"，缺英文名回退中文名。身份键（name）本身不变 */
+window.__ROSTER__ = window.__ROSTER__ || [];
+function nameOf(nm) {
+  if (typeof window === "undefined" || !window.__I18N_EN) return nm;
+  const rec = (window.__ROSTER__ || []).find(x => x && x.name === nm);
+  const en = rec ? ((rec.fname || "") + " " + (rec.lname || "")).trim() : "";
+  return en || nm;
+}
+const escPlain = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const escRaw = s => (typeof window !== "undefined" && window.__I18N_EN ? "\u0003" : "") + escPlain(s) + (typeof window !== "undefined" && window.__I18N_EN ? "\u0003" : "");
+const esc = s => {
+  if (typeof window !== "undefined" && window.__I18N_EN) {
+    const rec = (window.__ROSTER__ || []).find(x => x && x.name === s);
+    const en = rec ? ((rec.fname || "") + " " + (rec.lname || "")).trim() : "";
+    if (en) return escRaw(en);
+  }
+  return escRaw(s);
+};
 const genCode = () => String(Math.floor(100000 + Math.random() * 900000));
 function fmtTime(ts) {
   const d = new Date(ts), p = x => String(x).padStart(2, "0");
@@ -292,7 +310,7 @@ function attachMention(input, getMembers) {
     items.forEach((nm, i) => {
       const d = document.createElement("div");
       d.className = "mi" + (i === idx ? " on" : "");
-      d.textContent = "@" + nm;
+      d.textContent = "@" + nameOf(nm);   /* EN 模式下拉显示英文名，选中仍插入中文名（身份键） */
       d.onclick = () => pick(nm);
       box.appendChild(d);
     });
@@ -308,7 +326,7 @@ function attachMention(input, getMembers) {
     const m = v.slice(0, pos).match(/@([^\s@]{0,16})$/);
     if (!m) { hide(); return; }
     const q = m[1].toLowerCase();
-    items = Array.from(new Set((getMembers() || []).filter(nm => nm && nm.toLowerCase().includes(q)))).slice(0, 6);
+    items = Array.from(new Set((getMembers() || []).filter(nm => nm && (nm.toLowerCase().includes(q) || nameOf(nm).toLowerCase().includes(q))))).slice(0, 6);
     if (!items.length) { hide(); return; }
     idx = 0;
     start = pos - m[1].length - 1;
@@ -324,13 +342,25 @@ function attachMention(input, getMembers) {
     else if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); hide(); }
   });
 }
-/* 消息文本渲染：转义后高亮 @名字（names 为本群成员名单） */
+/* 消息文本渲染：转义后高亮 @名字（names 为本群成员名单）；EN 模式把 @中文名 显示为 @英文名 */
 function renderRich(text, names) {
-  let html = esc(text || "");
   const toks = Array.from(new Set(((names || []).concat(["全体成员", "管理员"])).filter(Boolean)));
   toks.sort((a, b) => b.length - a.length);
-  toks.forEach(nm => {
-    const en = esc(nm);
+  let t = String(text || "");
+  if (typeof window !== "undefined" && window.__I18N_EN) {
+    toks.forEach(nm => {
+      const en = nameOf(nm);
+      if (en !== nm) {
+        const re = new RegExp("@" + nm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![\\w\\u4e00-\\u9fa5])", "g");
+        t = t.replace(re, "@" + en);
+      }
+    });
+  }
+  let html = esc(t);
+  const shown = toks.map(nm => nameOf(nm));
+  shown.sort((a, b) => b.length - a.length);
+  shown.forEach(nm => {
+    const en = escPlain(nm);
     const re = new RegExp("@" + en.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![\\w\\u4e00-\\u9fa5])", "g");
     html = html.replace(re, mm => `<span class="atmark">${mm}</span>`);
   });
@@ -479,7 +509,97 @@ function attachGifPaste(input, send) {
     }
   });
 }
-/* GIF 消息体渲染（发送者不显示收藏按钮）+ 事件绑定 */
+/* ================= 评分标准（E/M/D/B 自动评级，全校共享 retained 主题 APP/std/<校>） ================= */
+/* 默认：满分 100 · 百分比阈值 E≥98% · M≥70% · D≥60% · B<60%；阈值也可切换为绝对分 */
+const STD_LV = ["E", "M", "D", "B"];                       // E 最好 → B 最差
+const STD_LV_COLOR = { E: "#2fbf8f", M: "#4f8cff", D: "#e08a2e", B: "#ff5d6c" };
+const STD_FULL_PRESETS = [50, 100, 120, 150, 200];
+/* 默认作业类型与权重（百分比，和为 100）：项目 / 期末 / 期中 / classwork / 作业 */
+function STD_DEFAULT_TYPES() {
+  return [
+    { key: "project", label: "项目", pct: 20 },
+    { key: "final", label: "期末", pct: 25 },
+    { key: "midterm", label: "期中", pct: 20 },
+    { key: "classwork", label: "classwork", pct: 25 },
+    { key: "homework", label: "作业", pct: 10 }
+  ];
+}
+const STD_DEFAULT = { full: 100, mode: "pct", E: 98, M: 70, D: 60, types: STD_DEFAULT_TYPES() };
+/* 规范化作业类型：补 key/label/pct，限幅 0-100，按 key 去重 */
+function stdTypesNorm(list) {
+  const arr = Array.isArray(list) ? list.filter(x => x && typeof x === "object") : [];
+  const out = [];
+  const seen = new Set();
+  arr.forEach(t => {
+    let key = String(t.key || "").trim();
+    let label = String(t.label || "").trim();
+    if (!key && !label) return;
+    if (!key) key = label;
+    if (!label) label = key;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const pct = isFinite(+t.pct) ? Math.min(100, Math.max(0, +t.pct)) : 0;
+    out.push({ key, label, pct: Math.round(pct * 10) / 10 });
+  });
+  return out;
+}
+/* 返回规范化后的作业类型数组（缺省时给默认） */
+function stdTypes(st) {
+  const s = stdNorm(st);
+  return (s.types && s.types.length) ? s.types : STD_DEFAULT_TYPES();
+}
+/* 作业类型 key → 显示标签（key 不存在时回退 key 自身） */
+function stdTypeLabel(st, key) {
+  const ts = stdTypes(st);
+  const t = ts.find(x => x.key === key);
+  return t ? t.label : (key || "");
+}
+/* 规范化：补齐缺省、限幅、并保证 E ≥ M ≥ D；types 一并保留并规范化 */
+function stdNorm(s) {
+  const d = STD_DEFAULT;
+  if (!s || typeof s !== "object") return { school: "", by: "", at: 0, full: d.full, mode: d.mode, E: d.E, M: d.M, D: d.D, types: STD_DEFAULT_TYPES() };
+  const mode = (s.mode === "abs") ? "abs" : "pct";
+  const full = Math.min(1000, Math.max(1, Math.round(+s.full || d.full)));
+  const cap = mode === "pct" ? 100 : full;
+  const num = (v, def) => (isFinite(+v) && String(v).trim() !== "" ? Math.min(cap, Math.max(0, +v)) : def);
+  let t = [num(s.E, mode === "pct" ? d.E : Math.round(d.E / 100 * full)),
+           num(s.M, mode === "pct" ? d.M : Math.round(d.M / 100 * full)),
+           num(s.D, mode === "pct" ? d.D : Math.round(d.D / 100 * full))];
+  t = t.sort((a, b) => b - a);
+  const types = (s.types && s.types.length) ? stdTypesNorm(s.types) : STD_DEFAULT_TYPES();
+  return { school: s.school || "", full, mode, E: t[0], M: t[1], D: t[2], types, by: s.by || "", at: +s.at || 0 };
+}
+/* 满分（缺省 100） */
+function stdFull(s) { return (s && +s.full) || STD_DEFAULT.full; }
+/* 某等级的绝对分数线：pct 模式按满分折算 */
+function stdCut(s, lv) {
+  const st = stdNorm(s);
+  if (lv === "B") return 0;
+  const v = +st[lv];
+  if (!isFinite(v)) return 0;
+  return st.mode === "pct" ? Math.round(v / 100 * st.full * 10) / 10 : v;
+}
+/* 绝对分 → 等级 */
+function stdLevel(s, sc) {
+  const st = stdNorm(s);
+  const v = +sc || 0;
+  if (v >= stdCut(st, "E")) return "E";
+  if (v >= stdCut(st, "M")) return "M";
+  if (v >= stdCut(st, "D")) return "D";
+  return "B";
+}
+/* 一句话说明（用于成绩页提示） */
+function stdText(s) {
+  const st = stdNorm(s);
+  const u = st.mode === "pct" ? "%" : "";
+  const f = n => String(Math.round(n * 10) / 10);
+  const cut = lv => (st.mode === "pct" ? f(stdCut(st, lv)) + " 分" : "");
+  return `满分 ${st.full} · E ≥ ${f(st.E)}${u}` + (st.mode === "pct" ? `（${cut("E")}）` : "") +
+    ` · M ≥ ${f(st.M)}${u}` + (st.mode === "pct" ? `（${cut("M")}）` : "") +
+    ` · D ≥ ${f(st.D)}${u}` + (st.mode === "pct" ? `（${cut("D")}）` : "") +
+    ` · B < ${f(st.D)}${u}`;
+}
+/* ================= GIF 消息体渲染（发送者不显示收藏按钮）+ 事件绑定 ================= */
 function gifBodyHtml(m, mine) {
   const fav = mine ? "" : (stickerHas(m.gif) ? '<span class="muted gifsaved">⭐ 已收藏</span>' : '<button type="button" class="gifsave">⭐ 收藏</button>');
   return `<img class="gifmsg" src="${esc(m.gif)}" loading="lazy" alt="GIF">${fav ? `<div class="gifbar">${fav}</div>` : ""}`;

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>评分标准 · 嘻嗨校园</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<script>if (typeof mqtt === "undefined") document.write('<script src="https:\/\/unpkg.com\/mqtt@4.3.7\/dist\/mqtt.min.js"><\/script>');</script>
+<script src="i18n.js"></script>
+<script src="core.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root,[data-theme="light"]{--bg:#eef1f8;--panel:#ffffff;--panel2:#eaf0fb;--line:#d4dcee;--txt:#1b2340;--sub:#5b6a90;--accent:#4f8cff;--danger:#ff5d6c;--ok:#2fbf8f;--warn:#e08a2e}
+[data-theme="dark"]{--bg:#0b101c;--panel:#141c2e;--panel2:#1d2740;--line:#29365a;--txt:#e9eef8;--sub:#8da0c4;--accent:#4f8cff;--danger:#ff5d6c;--ok:#2fbf8f;--warn:#e8a13c}
+body{background:var(--bg);color:var(--txt);font-family:"Microsoft YaHei",system-ui,sans-serif;height:100vh;overflow:hidden}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:8px;padding:7px 14px;font-size:14px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+button.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+button.ghost{background:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px;font-size:14px;outline:none;width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+textarea{resize:vertical;font-family:inherit}
+.hidden{display:none!important}
+.muted{color:var(--sub);font-size:12px}
+.screen{position:fixed;inset:0;display:flex;flex-direction:column}
+header.top{display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+header.top .logo{font-weight:bold;font-size:16px}
+header.top .who{color:var(--sub);font-size:12px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+header.top .grow{flex:1}
+header.top select{width:auto;padding:4px 8px;font-size:12px;background:var(--panel2)}
+.body{flex:1;overflow-y:auto;padding:18px 20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+.card h3{font-size:15px;margin-bottom:12px}
+.card h3 .sub{font-weight:normal;font-size:12px;color:var(--sub)}
+.card input,.card select,.card textarea{margin-bottom:10px}
+.pt-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.pt-row select,.pt-row input{width:auto;margin:0;flex:1;min-width:120px}
+.pt-btns{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.pt-rank{width:100%;border-collapse:collapse;font-size:13px}
+.pt-rank td,.pt-rank th{border:1px solid var(--line);padding:7px 10px;text-align:left}
+.pt-rank th{background:var(--panel2);font-weight:normal;color:var(--sub)}
+/* 等级标尺 */
+.stdbar{display:flex;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:8px}
+.stdbar .seg{display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;font-weight:bold;min-width:0;overflow:hidden;white-space:nowrap}
+.stdticks{display:flex;font-size:11px;color:var(--sub);margin-bottom:8px}
+.stdticks span{flex:none}
+.lvbadge{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:10px;color:#fff;font-weight:bold;font-size:18px}
+.mchip{display:flex;align-items:center;gap:6px;font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 11px}
+#toasts{position:fixed;top:14px;right:14px;z-index:100;width:320px;display:flex;flex-direction:column;gap:10px}
+.toast{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.5);animation:slidein .25s ease;z-index:101}
+.toast.warn{border-left-color:var(--danger)}
+.toast.ok{border-left-color:var(--ok)}
+.toast .tt{line-height:1.5;word-break:break-word}
+.toast .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.toast .btns button{padding:5px 10px;font-size:12px}
+@keyframes slidein{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
+#gateOverlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px}
+</style>
+</head>
+<body>
+<div id="toasts"></div>
+<div id="gateOverlay" class="hidden">
+  <b style="font-size:20px">📐 评分标准</b>
+  <p class="muted" id="gateMsg">尚未登录，正在跳转到登录页…</p>
+  <button id="gateBack" class="primary">返回主页</button>
+</div>
+
+<div id="scr-std" class="screen hidden">
+  <header class="top">
+    <span class="logo">📐 评分标准</span>
+    <span class="who" id="whoLabel"></span>
+    <span class="grow"></span>
+    <span class="who" id="permState" title="身份与编辑权限检测">🔍 检测中…</span>
+    <span class="who" id="connState">连接中…</span>
+    <select id="themeSel" title="主题"><option value="auto">🌓 跟随时间</option><option value="dark">🌙 深色</option><option value="light">☀ 浅色</option></select>
+    <select id="langSel" title="语言"><option value="zh">中文</option><option value="en">English</option></select>
+    <button id="backBtn" class="ghost">← 主页</button>
+  </header>
+
+  <div class="body">
+    <div class="card">
+      <h3>📊 当前全校标准 <span class="sub" id="stdOwner"></span></h3>
+      <div class="stdbar" id="stdBar"></div>
+      <div class="stdticks" id="stdTicks"></div>
+      <table class="pt-rank" id="stdTable"></table>
+      <p class="muted" id="stdHint"></p>
+    </div>
+
+    <div class="card" id="editCard">
+      <h3>⚙️ 调整标准 <span class="sub">（教师 / 管理员可修改，保存后全校立即生效）</span></h3>
+      <div class="pt-row">
+        <span class="muted" style="flex:none">满分</span>
+        <select id="fullSel" style="flex:none;width:auto">
+          <option value="50">50 分</option>
+          <option value="100" selected>100 分</option>
+          <option value="120">120 分</option>
+          <option value="150">150 分</option>
+          <option value="200">200 分</option>
+          <option value="custom">自定义…</option>
+        </select>
+        <input id="fullCustom" class="hidden" placeholder="自定义满分（1-1000）" inputmode="numeric" maxlength="4" style="flex:none;width:190px">
+      </div>
+      <div class="pt-row">
+        <span class="muted" style="flex:none">阈值方式</span>
+        <select id="modeSel" style="flex:none;width:auto">
+          <option value="pct">百分比（相对满分，如 98%）</option>
+          <option value="abs">绝对分（直接填分数，如 98 分）</option>
+        </select>
+      </div>
+      <div class="pt-row">
+        <span class="muted" style="flex:none">E（最好）≥</span><input id="thE" inputmode="decimal" maxlength="6">
+        <span class="muted" style="flex:none">M ≥</span><input id="thM" inputmode="decimal" maxlength="6">
+        <span class="muted" style="flex:none">D ≥</span><input id="thD" inputmode="decimal" maxlength="6">
+        <span class="muted" style="flex:none" id="unitTip"></span>
+      </div>
+      <p class="muted" id="previewText"></p>
+      <div class="pt-row">
+        <span class="muted" style="flex:none">试算：</span>
+        <input id="tryScore" placeholder="输入一个分数，看会被评为什么等级" inputmode="decimal" maxlength="6">
+        <span id="tryOut" style="flex:none;display:flex;align-items:center;gap:8px"></span>
+      </div>
+      <div class="pt-btns">
+        <button id="saveBtn" class="primary" style="flex:none">💾 保存为本校标准</button>
+        <button id="resetBtn" class="ghost" style="flex:none">↺ 恢复默认（98/70/60）</button>
+      </div>
+      <p class="muted">说明：E 最好 · M 第二 · D 第三 · B 最差（低于 D 线即为 B）。保存后立即影响<b>成绩录入的自动评级</b>与<b>学科圆环的满分刻度</b>；已录入的历史成绩等级不会被改写。只有教师和管理员能修改，其他人只能查看。</p>
+    </div>
+
+    <div class="card" id="typesCard">
+      <h3>📚 作业类型与权重 <span class="sub">（教师录入成绩时按此处定义的类型选择；权重总和建议为 100%）</span></h3>
+      <div id="typesList"></div>
+      <div class="pt-row" style="margin-top:6px">
+        <input id="typeNewLabel" placeholder="新作业类型名称（如 随堂测验）" maxlength="16" style="flex:1;min-width:140px">
+        <input id="typeNewPct" placeholder="权重%" inputmode="decimal" maxlength="6" style="flex:none;width:120px">
+        <button id="typeAddBtn" class="primary" style="flex:none">＋ 添加类型</button>
+      </div>
+      <p class="muted" id="typesTotal"></p>
+      <p class="muted">说明：录入成绩时老师需选择作业类型（如 classwork / 作业 / 项目 / 期中 / 期末）；权重用于按类型折算总评。保存标准时类型与权重一并写入云端。</p>
+    </div>
+
+    <div class="card">
+      <h3>🧮 批量试算 <span class="sub">（按当前填写的标准，看看各分数段落在哪一级）</span></h3>
+      <div class="memberchips" id="sampleBox" style="flex-wrap:wrap"></div>
+    </div>
+  </div>
+</div>
+<script src="grading.js"></script>
+</body>
+</html>

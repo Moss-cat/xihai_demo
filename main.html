@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>嘻嗨校园</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<script>if (typeof mqtt === "undefined") document.write('<script src="https:\/\/unpkg.com\/mqtt@4.3.7\/dist\/mqtt.min.js"><\/script>');</script>
+<script src="i18n.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="core.js"></script>
 <style>
@@ -140,7 +142,7 @@ main{padding:18px 20px;overflow-y:auto}
     <aside>
       <h3>群组</h3>
       <button id="navClass" class="navbtn hidden"><span class="ico">🏫</span><span><b data-t="nav.class">我的班级群</b><span id="navClassSub"></span></span></button>
-      <button id="navCouncil" class="navbtn hidden"><span class="ico">⭐</span><span><b>学生会群</b><span>成员发起会议 · 管理员审批</span></span></button>
+      <button id="navCouncil" class="navbtn hidden"><span class="ico">⭐</span><span><b>学生会群</b><span>学生自治 · 成员直接发起会议</span></span></button>
       <h3>好友</h3>
       <div class="row"><input id="friendName" placeholder="用户名" maxlength="16"><button id="addFriendBtn" class="primary">添加</button></div>
       <div style="height:8px"></div>
@@ -157,12 +159,18 @@ main{padding:18px 20px;overflow-y:auto}
         <button data-tab="prq" id="tbPrq" class="hidden" data-t="tab.prq">📨 家长消息</button>
         <button data-tab="points" id="tbPoints" class="hidden" data-t="tab.points">⭐ 学院分</button>
         <button data-tab="grades" id="tbGrades" class="hidden" data-t="tab.grades">📈 成绩</button>
+        <button data-tab="goal" id="tbGoal" class="hidden" data-t="tab.goal">🎯 SMART Goal</button>
         <button data-tab="tt" id="tbTt" class="hidden" data-t="tab.tt">📅 课表</button>
         <button data-tab="stu" id="tbStu" class="hidden" data-t="tab.stu">👥 学生管理</button>
         <button data-tab="school" id="tbSchool" class="hidden" data-t="tab.school">🏫 学校管理</button>
       </div>
       <!-- 视频通话 -->
       <div id="tabMeet">
+        <!-- 学科圆环（学生激励，仿"健康"活动圆环） -->
+        <div class="card hidden" id="ringCardMeet">
+          <h3>⭕ 学科圆环 <span class="sub">（环 = 平均分进度 · 颜色 = 最近等级 · 金色细环 = 冲刺 goal 进度）</span></h3>
+          <div id="ringBoxMeet" style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end"></div>
+        </div>
         <div class="card">
           <h3 data-t="meet.join">🔑 加入会议</h3>
           <div class="row"><input id="joinCode" placeholder="会议码（6 位数字）" maxlength="6" inputmode="numeric"><button id="joinBtn" class="primary">申请加入</button></div>
@@ -297,8 +305,17 @@ main{padding:18px 20px;overflow-y:auto}
       </div>
       <!-- 成绩（学生/家长查看 · 教师录入） -->
       <div id="tabGrades" class="hidden">
+        <div class="card">
+          <h3>📐 评分标准 <span class="sub">（全校统一的 E / M / D / B 自动评级）</span></h3>
+          <p class="muted" id="grStdNote"></p>
+          <button id="stdViewBtn" class="hidden" style="margin-top:8px">⚙️ 查看 / 调整评分标准</button>
+        </div>
+        <div class="card hidden" id="ringCardGrades">
+          <h3>⭕ 学科圆环 <span class="sub" id="ringNote"></span></h3>
+          <div id="ringBoxGrades" style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end"></div>
+        </div>
         <div class="card" id="grAddCard">
-          <h3>✏️ 成绩录入 <span class="sub">（科目 + 分数 + E/M/D/B 等级）</span></h3>
+          <h3>✏️ 成绩录入 <span class="sub">（科目 + 作业类型 + 分数 + E/M/D/B 等级）</span></h3>
           <div class="pt-row">
             <select id="grStudent"></select>
             <input id="grSubject" list="grSubList" placeholder="科目（如 数学）" maxlength="10">
@@ -308,6 +325,7 @@ main{padding:18px 20px;overflow-y:auto}
               <option value="历史"></option><option value="地理"></option><option value="道德与法治"></option>
               <option value="体育"></option><option value="音乐"></option><option value="美术"></option><option value="信息科技"></option>
             </datalist>
+            <select id="grType" style="flex:none;width:auto"><option value="">作业类型…</option></select>
             <input id="grScore" placeholder="分数（0-150）" inputmode="decimal" maxlength="6">
             <select id="grLevel" style="flex:none;width:auto">
               <option value="">等级</option><option value="E">E（最好）</option><option value="M">M（第二）</option>
@@ -315,7 +333,8 @@ main{padding:18px 20px;overflow-y:auto}
             </select>
             <button id="grAdd" class="primary" style="flex:none">＋ 录入</button>
           </div>
-          <p class="muted">等级标准：E 最好 · M 第二 · D 第三 · B 最差。录入分数后自动预选等级（E≥90 · M≥80 · D≥60 · B&lt;60），可手动修改。</p>
+          <p class="muted">等级标准：E 最好 · M 第二 · D 第三 · B 最差。录入分数后会按本校标准自动预选等级，可手动修改。<b>作业类型</b>（项目 / 期末 / 期中 / classwork / 作业 等）由老师在「调整全校评分标准」中维护，未选则记为「其他」。</p>
+          <div class="pt-row"><button id="stdBtn" class="hidden" style="flex:none">📐 调整全校评分标准</button></div>
         </div>
         <div class="card" id="grSendCard">
           <h3>📨 给家长发学况反馈 <span class="sub">（学习状况、在校表现等，家长离线也能收到）</span></h3>
@@ -340,6 +359,48 @@ main{padding:18px 20px;overflow-y:auto}
         <div class="card" id="grReportCard">
           <h3>📨 老师发来的学况反馈</h3>
           <div id="grReports"></div>
+        </div>
+      </div>
+      <!-- SMART Goal（学生专属） -->
+      <div id="tabGoal" class="hidden">
+        <div class="card">
+          <h3>🎯 新建 SMART Goal <span class="sub">（ Specific · Measurable · Achievable · Relevant · Time-bound ）</span></h3>
+          <div class="pt-row">
+            <select id="goalTpl" style="flex:none;width:auto">
+              <option value="allLevel">模板：学期全科都达到某等级及以上</option>
+              <option value="subScore">模板：某科期末考试达到某分数以上</option>
+              <option value="points">模板：学院分累计达到某分数</option>
+              <option value="custom">自定义 goal（仅自己可批准完成）</option>
+            </select>
+          </div>
+          <div class="pt-row" id="goalRowAllLevel">
+            <span class="muted" style="flex:none">全科等级不低于</span>
+            <select id="goalLv" style="flex:none;width:auto">
+              <option value="E">E（最好）</option><option value="M" selected>M（第二）</option>
+              <option value="D">D（第三）</option><option value="B">B（最差）</option>
+            </select>
+          </div>
+          <div class="pt-row hidden" id="goalRowSubScore">
+            <input id="goalSub" list="grSubList" placeholder="科目（可改，如 数学）" maxlength="10" style="flex:none;width:160px">
+            <input id="goalSc" placeholder="期末目标分数（0-150）" inputmode="decimal" maxlength="6">
+          </div>
+          <div class="pt-row hidden" id="goalRowPoints">
+            <input id="goalPt" placeholder="目标学院分（正整数，如 100）" inputmode="numeric" maxlength="6">
+          </div>
+          <div id="goalRowCustom" class="hidden">
+            <textarea id="goalText" placeholder="描述你的 goal（如：每天阅读 30 分钟，坚持一个月）" maxlength="100" rows="2"></textarea>
+          </div>
+          <p class="muted" id="goalPreview"></p>
+          <button id="goalAdd" class="primary">＋ 创建 goal</button>
+          <p class="muted">说明：模板 goal 会根据你的成绩 / 学院分<b>自动判定</b>是否完成；自定义 goal 由<b>你自己批准</b>完成。每次进入主页都会提示 goal 完成进度。</p>
+        </div>
+        <div class="card">
+          <h3>⭕ 学科圆环 <span class="sub">（环 = 平均分进度 · 颜色 = 最近等级 · 金色细环 = 该科 subScore goal 进度）</span></h3>
+          <div id="ringBoxGoal" style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end"></div>
+        </div>
+        <div class="card">
+          <h3>📋 我的 goal <span class="sub" id="goalSummary"></span></h3>
+          <div id="goalList"></div>
         </div>
       </div>
       <!-- 课表（教师自定义） -->
@@ -371,6 +432,8 @@ main{padding:18px 20px;overflow-y:auto}
           <h3>👥 添加学生 <span class="sub">（学生不能自行注册，账号由老师在此开通；学号必填且全校唯一）</span></h3>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
             <input id="stuName" placeholder="姓名（登录用户名）" maxlength="16">
+            <input id="stuFirst" placeholder="First name（英文名，可空）" maxlength="30">
+            <input id="stuLast" placeholder="Last name（英文姓，可空）" maxlength="30">
             <input id="stuSid" placeholder="学号（必填，家长密码=学号）" maxlength="12">
             <select id="stuGrade">
               <option value="">年级</option>
@@ -404,6 +467,10 @@ main{padding:18px 20px;overflow-y:auto}
             <select id="newAccRole" style="width:auto;flex:none"><option value="teacher">教师</option><option value="parent">家长</option></select>
           </div>
           <div class="row" style="margin-top:8px">
+            <input id="newAccFirst" placeholder="First name（英文名，可空）" maxlength="30">
+            <input id="newAccLast" placeholder="Last name（英文姓，可空）" maxlength="30">
+          </div>
+          <div class="row" style="margin-top:8px">
             <input id="newAccPass" type="text" placeholder="初始密码（4-20 位）" maxlength="20">
             <button id="newAccBtn" class="primary" style="flex:none">创建账号</button>
           </div>
@@ -412,8 +479,8 @@ main{padding:18px 20px;overflow-y:auto}
         </div>
         <div class="card">
           <h3>📥 Excel 批量导入 <span class="sub">（把表格文件拖入对应区域，或点击区域选择文件）</span></h3>
-          <div class="dropzone" id="dropStu"><b>🧑‍🎓 学生表格</b>：拖入 .xlsx / .xls / .csv<br><span class="muted">第一列 姓名 · 第二列 学号 · 第三列 密码 · 第四列 班级（如 6B = 六年级B班，最多 E 班）</span></div>
-          <div class="dropzone" id="dropTch"><b>🧑‍🏫 教师表格</b>：拖入 .xlsx / .xls / .csv<br><span class="muted">第一列 姓名 · 第二列 班主任 / 非班主任 · 第三列 班级（班主任必填，如 6B；非班主任留空）· 第四列 密码</span></div>
+          <div class="dropzone" id="dropStu"><b>🧑‍🎓 学生表格</b>：拖入 .xlsx / .xls / .csv<br><span class="muted">第一列 姓名 · 第二列 学号 · 第三列 密码 · 第四列 班级（如 6B = 六年级B班，最多 E 班）· 第五 / 六列可选 First name / Last name（英文名，英文模式显示用）</span></div>
+          <div class="dropzone" id="dropTch"><b>🧑‍🏫 教师表格</b>：拖入 .xlsx / .xls / .csv<br><span class="muted">第一列 姓名 · 第二列 班主任 / 非班主任 · 第三列 班级（班主任必填，如 6B；非班主任留空）· 第四列 密码 · 第五 / 六列可选 First name / Last name（英文名，英文模式显示用）</span></div>
           <p class="muted">导入前会逐行校验并预览，确认无误后才会批量创建账号（家长账号不在此创建，家长自行注册）。</p>
           <div id="batchPreview"></div>
         </div>

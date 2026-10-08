@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>学生会群 · 嘻嗨校园</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<script>if (typeof mqtt === "undefined") document.write('<script src="https:\/\/unpkg.com\/mqtt@4.3.7\/dist\/mqtt.min.js"><\/script>');</script>
+<script src="i18n.js"></script>
 <script src="core.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -66,8 +68,9 @@ header.top .grow{flex:1}
 .toast .btns button{padding:5px 10px;font-size:12px}
 .toast textarea{width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px;font-size:12px;resize:vertical;min-height:52px;font-family:inherit}
 #gate{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px}
+.body.admin-only{grid-template-columns:1fr}
 @keyframes slidein{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
-@media(max-width:860px){.body{grid-template-columns:1fr}.right{display:none}}
+@media(max-width:860px){.body{grid-template-columns:1fr}.right{display:none}.body.admin-only .right{display:block}}
 </style>
 </head>
 <body>
@@ -83,15 +86,16 @@ header.top .grow{flex:1}
     <span class="who" id="councilName"></span>
     <span class="grow"></span>
     <span class="who" id="connState">连接中…</span>
+    <select id="langSel" title="语言" style="padding:4px 6px;font-size:12px;width:auto"><option value="zh">中文</option><option value="en">English</option></select>
     <button id="backBtn" class="ghost">← 主页</button>
   </header>
   <div class="body">
     <div class="left">
       <div class="head">
-        <span class="ttl">💬 学生会讨论</span>
+        <span class="ttl" id="cnHeadTtl">💬 学生会讨论</span>
         <span class="muted" id="councilHint"></span>
       </div>
-      <div class="chatbox">
+      <div class="chatbox" id="cnChatBox">
         <div class="chatlog" id="chatLog"></div>
         <div class="chatinput">
           <button id="chatEmoji" class="ghost" title="表情">😊</button>
@@ -99,15 +103,15 @@ header.top .grow{flex:1}
           <input id="chatMsg" placeholder="发言 / 询问管理员…（@管理员 或 @成员名 会提醒对方，可直接粘贴图片）" maxlength="500">
           <button id="chatSend" class="primary">发送</button>
           <button id="askBtn" class="ghost" title="向管理员提问，管理员会收到醒目提醒">❓ 询问管理员</button>
-          <button id="reqMeetBtn" class="ok">📢 申请发起会议</button>
+          <button id="reqMeetBtn" class="ok">📢 发起会议</button>
         </div>
       </div>
     </div>
     <div class="right">
-      <h4>📢 发起会议申请（需管理员批准）</h4>
-      <div id="reqBox"></div>
-      <h4>🎥 进行中的会议</h4>
-      <div id="meetBox"></div>
+      <div id="cnMeetSec">
+        <h4>🎥 进行中的会议</h4>
+        <div id="meetBox"></div>
+      </div>
       <h4>👥 群成员 <span class="muted" id="memCount"></span></h4>
       <div class="memberchips" id="memList" style="margin-bottom:10px"></div>
       <div id="adminBox" class="hidden">

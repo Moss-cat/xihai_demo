@@ -32,6 +32,9 @@ let ptDoc = null;      // 学院分记录
 let grDoc = null;      // 成绩记录 {items:{<学生>:{recs:[{sub,sc,lv,at,by}]}}}
 let ttDoc = null;      // 我的课表（教师）{list:[{day,st,en,grade,cls,sub,at}]}
 let repDoc = null;     // 老师发来的学况反馈（家长）{items:[{from,child,text,at}]}
+let goalDoc = null;    // 我的 SMART Goal（学生）{name, items:[{id,tpl,text,sub?,lv?,sc?,pt?,done,doneAt,at}]}
+let stdDoc = null;     // 全校评分标准（retained APP/std/<校>）{school,full,mode:"pct"|"abs",E,M,D,by,at}
+let goalPromptShown = false; // 每次进入主页只提示一次 goal 进度
 let myClass = null;    // {grade,cls}
 let clTopic = "";      // 我的班级群 topic
 let clMembers = [];    // 班级成员 [{name,role,grade,cls,isClassTeacher}]
@@ -55,13 +58,19 @@ function enterMain() {
   preqs = LS.preq(me.name);
   LS.sreqs(me.name, reqs);
   showScreen("main");
-  $("myNameLabel").textContent = "👤 " + me.name + (me.school ? " · " + me.school : "") + " · " + parentRoleText() + (ROLE_LABEL[me.role] || me.role || "");
+  updateTopbar();
   renderFriends(); renderReqs(); renderSched(); renderPrq();
+  if (me.role === "student") setTimeout(() => maybeGoalPrompt(true), 6000); // retained 迟到/从未设置时的兜底提示
   setInterval(checkScheduled, 10000);
 }
 function showScreen(name) { ["main", "meet"].forEach(s => { const el = $("scr-" + s); if (el) el.classList.add("hidden"); }); $("scr-" + name).classList.remove("hidden"); }
 /* ================= MQTT 连接 ================= */
 function connect() {
+  if (typeof mqtt === "undefined") {
+    $("connState").textContent = "通信库加载失败，请刷新重试";
+    toast("MQTT 通信库加载失败（网络受限？），请刷新页面重试", "warn", 12000);
+    return;
+  }
   client = mqtt.connect(BROKER, {
     clientId: APP + "_hub_" + me.uid + "_" + me.dev + "_" + Math.random().toString(36).slice(2, 6),
     keepalive: 30, clean: true, connectTimeout: 8000,
@@ -80,6 +89,7 @@ function connect() {
       client.subscribe(`${APP}/cn/${me.school}`);
       client.subscribe(`${APP}/pt/${me.school}`);
       client.subscribe(`${APP}/gr/${me.school}`); // 成绩（retained，全校）
+      client.subscribe(`${APP}/std/${me.school}`); // 评分标准（retained，全校）
     }
     client.publish(`${APP}/u/${me.name}/${me.dev}`, JSON.stringify({ uid: me.uid, dev: me.dev, online: true }), { retain: true });
     refresh();
@@ -95,11 +105,13 @@ function connect() {
     if (topic.startsWith(APP + "/school/")) return onSchool(topic, m);
     if (topic.startsWith(APP + "/auth/")) { meAuth = (m && m.ph) ? m : {}; syncAuth(); return; }
     if (topic.startsWith(APP + "/cn/")) { if (m && m.name) cnDoc = m; else cnDoc = null; tryRenderAll(); return; }
-    if (topic.startsWith(APP + "/pt/")) { if (m && m.name) ptDoc = m; else ptDoc = { name: me.school, items: {} }; tryRenderAll(); return; }
-    if (topic.startsWith(APP + "/gr/")) { if (m && m.name) grDoc = m; else grDoc = { name: me.school, items: {} }; tryRenderAll(); return; }
+    if (topic.startsWith(APP + "/pt/")) { ptDoc = (m && (m.name || m.items)) ? m : { name: me.school, items: {} }; tryRenderAll(); return; }
+    if (topic.startsWith(APP + "/gr/")) { grDoc = (m && (m.name || m.items)) ? m : { name: me.school, items: {} }; tryRenderAll(); return; }
+    if (topic.startsWith(APP + "/std/")) { stdDoc = stdNorm(m); renderGrades(); renderRings(); return; }
     /* 课表 / 学况只认自己的主题：probeDoc 探测他人 rep 主题时，retained 消息不能污染本地 ttDoc/repDoc */
     if (topic === `${APP}/tt/${me.name}`) { ttDoc = (m && Array.isArray(m.list)) ? m : null; renderTt(); return; }
     if (topic === `${APP}/rep/${me.name}`) { repDoc = (m && Array.isArray(m.items)) ? m : { items: [] }; renderReports(); return; }
+    if (topic === `${APP}/goal/${me.name}`) { goalDoc = (m && Array.isArray(m.items)) ? m : null; syncGoals(); return; }
     if (topic.startsWith(APP + "/cl/")) { if (topic === clTopic) onClMsg(m); return; }
     if (topic.startsWith(APP + "/pc/")) { if (topic === pcTopic) onPcMsg(m); return; }
     if (topic.startsWith(APP + "/fr/")) return onFriendTopic(topic, m);
@@ -119,6 +131,8 @@ function refresh() {
   client.subscribe(`${APP}/cn/${me.school}`);
   client.subscribe(`${APP}/pt/${me.school}`);
   client.subscribe(`${APP}/gr/${me.school}`);
+  client.subscribe(`${APP}/std/${me.school}`); // 评分标准 retained 兜底补订阅
+  client.subscribe(`${APP}/goal/${me.name}`); // SMART Goal retained 兜底补订阅
 }
 /* auth 同步：会话里的角色/班级可能被管理员改动或注册时补充，以 retained auth 为准 */
 function syncAuth() {
@@ -134,7 +148,7 @@ function syncAuth() {
   /* 班级变更（年级/班级/角色）需要重新订阅班级群并重跑 autoFriend */
   const classChanged = JSON.stringify(newMyClass) !== JSON.stringify(myClass);
   myClass = newMyClass;
-  $("myNameLabel").textContent = "👤 " + me.name + (me.school ? " · " + me.school : "") + " · " + parentRoleText() + (ROLE_LABEL[me.role] || me.role || "");
+  updateTopbar();
   if (classChanged) classSetupDone = false; // 触发 ensureClassSetup 重跑
   isAdmin = adminsOf().includes(me.name);
   tryRenderAll();
@@ -142,6 +156,7 @@ function syncAuth() {
 /* ================= 学校记录 / 渲染总调度 ================= */
 function onSchool(topic, m) {
   if (m && m.name) schoolRec = m; else schoolRec = null;
+  syncRoster();
   isAdmin = adminsOf().includes(me.name);
   tryRenderAll();
 }
@@ -161,10 +176,17 @@ function parentRoleText() {
   return (meAuth.ptype || "家长") + " · ";
 }
 function tryRenderAll() {
+  syncRoster();
+  updateTopbar();
   if (!schoolRec || !Object.keys(meAuth).length) return;
   ensureClassSetup();
   renderAllUI();
 }
+/* 同步显示名单：EN 模式下 esc()/nameOf() 据此把中文名映射为英文名 First+Last */
+function syncRoster() { window.__ROSTER__ = (schoolRec && schoolRec.members) || []; }
+/* 顶栏：姓名/校名走 esc（EN 模式映射英文名并哨兵保护）；角色文本留给 i18n 词典翻译 */
+function updateTopbar() {
+  $("myNameLabel").innerHTML = "👤 " + esc(me.name) + (me.school ? " · " + esc(me.school) : "") + " · " + parentRoleText() + (ROLE_LABEL[me.role] || me.role || "");}
 /* 订阅班级 topic + 自动加好友：依赖 myClass，仅在 myClass 首次确定时执行一次 */
 function ensureClassSetup() {
   if (classSetupDone) return;
@@ -179,7 +201,8 @@ function renderAllUI() {
   renderFriends(); renderReqs();
   renderSchoolMembers(); renderStudentList();
   renderPoints();
-  renderGrades(); renderTt(); renderReports();
+  renderGrades(); renderRings(); renderTt(); renderReports();
+  renderGoals();
   renderClassUI();
   renderBroadcastUI();
   renderPcUI();
@@ -202,13 +225,14 @@ function renderTabs() {
   $("tbPoints").classList.remove("hidden"); // 学生只读 / 教师可加（加扣分卡由 ptAddCard 根据角色控制）
   $("tbGrades").classList.remove("hidden"); // 成绩：学生/家长查看 · 教师录入
   $("tbTt").classList.toggle("hidden", !(me.role === "teacher" || me.role === "admin")); // 课表：教师专属
+  $("tbGoal").classList.toggle("hidden", me.role !== "student"); // SMART Goal：学生专属
   const showStuSchool = isAdmin;
   $("tbStu").classList.toggle("hidden", !showStuSchool);
   $("tbSchool").classList.toggle("hidden", !showStuSchool);
   showTab(isParent ? "parent" : "meet");
 }
 function showTab(t) {
-  ["meet", "class", "broadcast", "parent", "prq", "points", "grades", "tt", "stu", "school"].forEach(n => {
+  ["meet", "class", "broadcast", "parent", "prq", "points", "grades", "goal", "tt", "stu", "school"].forEach(n => {
     const el = $("tab" + n.charAt(0).toUpperCase() + n.slice(1));
     if (el) el.classList.toggle("hidden", n !== t);
   });
@@ -305,6 +329,8 @@ $("clsMsg").addEventListener("keydown", e => { if (e.isComposing || e.keyCode ==
 $("clsSend").onclick = () => {
   const v = $("clsMsg").value.trim();
   if (!v || !clTopic) return;
+  if (!client) { toast("通信组件未加载，请刷新页面重试", "warn", 6000); return; }
+  if (!client.connected) toast("连接尚未就绪，消息将在连接恢复后自动送达", "warn", 4000);
   const names = classMembersOf().map(x => x.name).filter(n => n !== me.name);
   const all = v.includes("@全体成员");
   if (all && !(me.isHead || isAdmin)) { toast("只有班主任 / 管理员可以 @全体成员", "warn"); return; }
@@ -409,6 +435,7 @@ $("pcMsg").addEventListener("keydown", e => { if (e.isComposing || e.keyCode ===
 $("pcSend").onclick = () => {
   const v = $("pcMsg").value.trim();
   if (!v) return;
+  if (!client) { toast("通信组件未加载，请刷新页面重试", "warn", 6000); return; }
   if (!pcTopic) { toast("未找到孩子的班级，无法在家长群发言", "warn"); return; }
   const names = parentMembersOf().map(x => x.name).filter(n => n !== me.name);
   const all = v.includes("@全体成员");
@@ -940,15 +967,19 @@ function renderPtHist() {
     box.appendChild(d);
   });
 }
-function submitPt(name, delta, reason) {
-  if (!ptDoc) ptDoc = { name: me.school, items: {} };
-  const items = ptDoc.items || {};
+async function submitPt(name, delta, reason) {
+  /* 写前探测 broker 当前 retained 为基准合并：本地 doc 缺失（换入口刚打开 / 慢网）或过期（旧标签页双开）时，
+     直接整份覆盖会把其他学生的分数清空（最后写者覆盖竞态） */
+  const fresh = await probeDoc(`${APP}/pt/${me.school}`).catch(() => null);
+  const base = (fresh && (fresh.name || fresh.items)) ? fresh : (ptDoc && (ptDoc.name || ptDoc.items)) ? ptDoc : { name: me.school, items: {} };
+  const items = base.items || {};
   const rec = items[name] || { total: 0, hist: [] };
   rec.total = (rec.total || 0) + delta;
   rec.hist = rec.hist || [];
   rec.hist.push({ by: me.name, delta, reason, at: Date.now() });
   if (rec.hist.length > 200) rec.hist = rec.hist.slice(-200);
   items[name] = rec;
+  ptDoc = Object.assign({}, base, { name: me.school, items });
   client.publish(`${APP}/pt/${me.school}`, JSON.stringify({ name: me.school, items }), { retain: true, qos: 1 });
   renderPoints();
 }
@@ -981,6 +1012,7 @@ function removeMember(name) {
   if (!confirm(`确定将 ${name} 移出学校？其账号将被删除，无法再登录。`)) return;
   const members2 = (schoolRec.members || []).filter(x => x.name !== name);
   schoolRec = Object.assign({}, schoolRec, { members: members2 });
+  syncRoster();
   client.publish(`${APP}/school/${me.school}`, JSON.stringify(schoolRec), { retain: true, qos: 1 });
   try { client.publish(`${APP}/auth/${name}`, "", { retain: true, qos: 1 }); } catch (e) {}
   toast("已移除成员 <b>" + esc(name) + "</b> 并删除其账号", "warn");
@@ -1015,7 +1047,7 @@ function renderSchoolMembers() {
       if ((mm.role === "teacher" || mm.role === "admin") && isAdmin) {
         const tsf = document.createElement("button"); tsf.textContent = "设为管理员"; tsf.className = "primary";
         tsf.onclick = () => {
-          if (!confirm(`确定把 ${mm.name} 设为管理员？管理员可管理学校、出入学生会群。`)) return;
+          if (!confirm(`确定把 ${mm.name} 设为管理员？管理员可管理学校成员、创建各角色账号、管理学生会群成员。`)) return;
           setAdmin(mm.name, true);
           toast("已将 <b>" + esc(mm.name) + "</b> 设为管理员", "ok", 5000);
         };
@@ -1034,6 +1066,7 @@ function setAdmin(name, on) {
   const list = on ? (adms.includes(name) ? adms : adms.concat([name])) : adms.filter(x => x !== name);
   const members2 = (schoolRec.members || []).map(x => x.name === name ? Object.assign({}, x, { role: on ? "admin" : "teacher" }) : x);
   schoolRec = Object.assign({}, schoolRec, { admins: list, members: members2 });
+  syncRoster();
   client.publish(`${APP}/school/${me.school}`, JSON.stringify(schoolRec), { retain: true, qos: 1 });
   patchAuthRole(name, on ? "admin" : "teacher");
   if (!on && name === me.name) { isAdmin = false; setTimeout(() => { try { location.reload(); } catch (e) {} }, 1200); }
@@ -1084,6 +1117,7 @@ async function createAccount(n, pw, role, extra) {
   const members = ((schoolRec && schoolRec.members) || []).filter(x => x.name !== n);
   members.push(Object.assign({ name: n, role }, extra || {}));
   schoolRec = Object.assign({}, schoolRec || { name: me.school, admin: me.name, creator: me.name, createdAt: Date.now() }, { members });
+  syncRoster();
   client.publish(`${APP}/school/${me.school}`, JSON.stringify(schoolRec), { retain: true, qos: 1 });
   renderSchoolMembers(); renderStudentList(); renderPoints();
   return true;
@@ -1094,10 +1128,11 @@ $("newAccBtn").onclick = async () => {
   if (!/^[\w\u4e00-\u9fa5-]{2,16}$/.test(n)) { toast("用户名 2-16 位，仅中文/字母/数字/下划线/连字符", "warn"); return; }
   if (pw.length < 4 || pw.length > 20) { toast("密码需要 4-20 位", "warn"); return; }
   if (n === me.name) { toast("不能创建与你同名的账号", "warn"); return; }
+  const enF = $("newAccFirst").value.trim(), enL = $("newAccLast").value.trim();
   $("newAccBtn").disabled = true;
-  const ok = await createAccount(n, pw, role, {});
+  const ok = await createAccount(n, pw, role, (enF || enL) ? { fname: enF, lname: enL } : {});
   $("newAccBtn").disabled = false;
-  if (ok) { $("newAccName").value = ""; $("newAccPass").value = ""; toast("已创建" + (ROLE_LABEL[role] || role) + "账号 <b>" + esc(n) + "</b>，请把用户名和初始密码告知对方", "ok", 8000); }
+  if (ok) { $("newAccName").value = ""; $("newAccPass").value = ""; $("newAccFirst").value = ""; $("newAccLast").value = ""; toast("已创建" + (ROLE_LABEL[role] || role) + "账号 <b>" + esc(n) + "</b>，请把用户名和初始密码告知对方", "ok", 8000); }
 };
 $("addStuBtn").onclick = async () => {
   if (!isAdmin) return;
@@ -1110,11 +1145,12 @@ $("addStuBtn").onclick = async () => {
   if (!gender) { toast("请选择性别", "warn"); return; }
   if (pw.length < 4 || pw.length > 20) { toast("密码需要 4-20 位", "warn"); return; }
   if (n === me.name) { toast("不能创建与你同名的账号", "warn"); return; }
+  const enF = $("stuFirst").value.trim(), enL = $("stuLast").value.trim();
   $("addStuBtn").disabled = true;
-  const ok = await createAccount(n, pw, "student", { sid, grade: +g, cls, gender });
+  const ok = await createAccount(n, pw, "student", Object.assign({ sid, grade: +g, cls, gender }, (enF || enL) ? { fname: enF, lname: enL } : {}));
   $("addStuBtn").disabled = false;
   if (ok) {
-    $("stuName").value = ""; $("stuSid").value = ""; $("stuCls").value = ""; $("stuPass").value = ""; $("stuGrade").value = ""; $("stuGender").value = "";
+    $("stuName").value = ""; $("stuSid").value = ""; $("stuCls").value = ""; $("stuPass").value = ""; $("stuGrade").value = ""; $("stuGender").value = ""; $("stuFirst").value = ""; $("stuLast").value = "";
     toast("已添加学生 <b>" + esc(n) + "</b>（" + gradeLabel(g) + cls + "班 · 学号 " + esc(sid) + " · " + gender + "），请告知用户名和密码", "ok", 8000);
   }
 };
@@ -1131,7 +1167,11 @@ function batchValidate(kind, rows) {
     if (cells[0].includes("姓名") && (cells[1].includes("学号") || cells[1].includes("班主任"))) return; // 表头跳过
     const name = cells[0];
     const pw = kind === "student" ? cells[2] : cells[3];
+    /* 可选第 5/6 列：First name / Last name（英文模式显示用） */
+    const fname = cells[4] || "", lname = cells[5] || "";
     const bad = msg => { out.push({ ok: false, line, err: msg }); };
+    if ((fname || lname) && !/^[A-Za-z][A-Za-z .'-]{0,29}$/.test(fname)) return bad("「" + name + "」First name 格式应为英文（可留空）");
+    if ((fname || lname) && !/^[A-Za-z][A-Za-z .'-]{0,29}$/.test(lname)) return bad("「" + name + "」Last name 格式应为英文（可留空）");
     if (!/^[\w\u4e00-\u9fa5-]{2,16}$/.test(name)) return bad("姓名「" + name + "」需 2-16 位中文/字母/数字");
     if (name === me.name) return bad("不能导入与你（管理员）同名的账号");
     if (members.some(x => x.name === name)) return bad("「" + name + "」已是本校成员");
@@ -1146,7 +1186,7 @@ function batchValidate(kind, rows) {
       seenSid[sid] = true;
       const pc = parseClassStr(cells[3]);
       if (!pc) return bad("「" + name + "」班级「" + cells[3] + "」格式应为 数字+字母（如 6B，班级 A-E）");
-      out.push({ ok: true, line, name, sid, pw, grade: pc.grade, cls: pc.cls });
+      out.push({ ok: true, line, name, sid, pw, grade: pc.grade, cls: pc.cls, fname, lname });
     } else {
       const ht = cells[1];
       if (!/^(非)?班主任$/.test(ht)) return bad("「" + name + "」第二列需填「班主任」或「非班主任」");
@@ -1157,7 +1197,7 @@ function batchValidate(kind, rows) {
         if (!pc) return bad("「" + name + "」是班主任，第三列班级格式应为 数字+字母（如 6B）");
         grade = pc.grade; cls = pc.cls;
       }
-      out.push({ ok: true, line, name, pw, isHead, grade, cls });
+      out.push({ ok: true, line, name, pw, isHead, grade, cls, fname, lname });
     }
   });
   return out;
@@ -1193,9 +1233,10 @@ function showBatchPreview(kind, rows) {
     const d = document.createElement("div");
     d.className = "pitem";
     const info = r.ok
-      ? (kind === "student"
+      ? ((r.fname || r.lname ? "英文名 " + esc(((r.fname || "") + " " + (r.lname || "")).trim()) + " · " : "") +
+        (kind === "student"
         ? "学号 " + esc(r.sid) + " · " + gradeLabel(r.grade) + r.cls + "班"
-        : (r.isHead ? "班主任 · " + gradeLabel(r.grade) + r.cls + "班" : "非班主任"))
+        : (r.isHead ? "班主任 · " + gradeLabel(r.grade) + r.cls + "班" : "非班主任")))
       : esc(r.err || "数据无效");
     d.innerHTML = `<span class="n">${r.ok ? "✅" : "❌"} <b>${r.ok ? esc(r.name) : "第 " + r.line + " 行"}</b></span><span class="muted">${info}</span>`;
     box.appendChild(d);
@@ -1220,9 +1261,12 @@ async function runBatchImport(kind, rows) {
   for (const r of rows) {
     const ph = await hashPw(r.name, r.pw);
     const uid = Math.random().toString(36).slice(2, 12);
-    const extra = kind === "student"
-      ? { sid: r.sid, grade: r.grade, cls: r.cls }
-      : (r.isHead ? { isClassTeacher: true, grade: r.grade, cls: r.cls } : {});
+    const extra = Object.assign(
+      kind === "student"
+        ? { sid: r.sid, grade: r.grade, cls: r.cls }
+        : (r.isHead ? { isClassTeacher: true, grade: r.grade, cls: r.cls } : {}),
+      (r.fname || r.lname) ? { fname: r.fname || "", lname: r.lname || "" } : {}
+    );
     client.publish(`${APP}/auth/${r.name}`, JSON.stringify(Object.assign(
       { ph, reg: Date.now(), uid, school: me.school, role: kind === "student" ? "student" : "teacher", createdBy: me.name }, extra
     )), { retain: true, qos: 1 });
@@ -1232,6 +1276,7 @@ async function runBatchImport(kind, rows) {
     if (r.isHead && !headPairs.some(p => p.grade === r.grade && p.cls === r.cls)) headPairs.push({ grade: r.grade, cls: r.cls });
   }
   schoolRec = Object.assign({}, schoolRec, { members });
+  syncRoster();
   client.publish(`${APP}/school/${me.school}`, JSON.stringify(schoolRec), { retain: true, qos: 1 });
   /* 班主任名单：按新成员表重建对应班级的 heads retained */
   headPairs.forEach(p => {
@@ -1311,6 +1356,8 @@ function pieSvg(counts) {
 /* 成绩统计 tab 总渲染：教师可录入 / 选学生查看；学生看自己；家长看孩子 */
 function renderGrades() {
   const teacher = canGrade();
+  renderStdNote();
+  renderGrTypes();
   const isParent = me.role === "parent";
   const addCard = $("grAddCard"); if (addCard) addCard.classList.toggle("hidden", !teacher);
   const sendCard = $("grSendCard"); if (sendCard) sendCard.classList.toggle("hidden", !teacher);
@@ -1334,7 +1381,7 @@ function renderGrades() {
       who.innerHTML = '<option value="">查看学生…</option>';
       stuList.forEach(s => { const o = document.createElement("option"); o.value = s.name; o.textContent = stuOpt(s); who.appendChild(o); });
       if (cur && Array.from(who.options).some(o => o.value === cur)) who.value = cur;
-      who.onchange = renderGrades;
+      who.onchange = () => { renderGrades(); renderRings(); };
       target = who.value || "";
     }
   } else {
@@ -1368,32 +1415,46 @@ function renderGrades() {
     recs.slice(0, 50).forEach(r => {
       const d = document.createElement("div");
       d.className = "pitem";
-      d.innerHTML = `<span class="n"><b>${esc(r.sub || "科目")}</b> · ${+r.sc || 0} 分 · <b style="color:${LV_COLOR[r.lv] || "var(--txt)"}">${esc(r.lv || "—")}</b></span><span class="muted">${esc(r.by || "老师")} · ${fmtTime(r.at || Date.now())}</span>`;
+      const typeLabel = r.type ? stdTypeLabel(stdNow(), r.type) : "";
+      const typeTag = typeLabel ? ` · <span class="muted" style="font-size:11px">[${esc(typeLabel)}]</span>` : "";
+      d.innerHTML = `<span class="n"><b>${esc(r.sub || "科目")}</b>${typeTag} · ${+r.sc || 0} 分 · <b style="color:${LV_COLOR[r.lv] || "var(--txt)"}">${esc(r.lv || "—")}</b></span><span class="muted">${esc(r.by || "老师")} · ${fmtTime(r.at || Date.now())}</span>`;
       hb.appendChild(d);
     });
   }
 }
-/* 成绩录入（教师）：retained 写入 APP/gr/<校> */
-function submitGrade(name, sub, sc, lv) {
-  if (!grDoc) grDoc = { name: me.school, items: {} };
-  const items = grDoc.items || {};
+/* 成绩录入（教师）：retained 写入 APP/gr/<校>；type = 作业类型 key（可空） */
+async function submitGrade(name, sub, sc, lv, type) {
+  /* 写前探测合并（同 submitPt）：防止本地 doc 缺失/过期时整份覆盖清空他人成绩 */
+  const fresh = await probeDoc(`${APP}/gr/${me.school}`).catch(() => null);
+  const base = (fresh && (fresh.name || fresh.items)) ? fresh : (grDoc && (grDoc.name || grDoc.items)) ? grDoc : { name: me.school, items: {} };
+  const items = base.items || {};
   const rec = items[name] || { recs: [] };
   rec.recs = rec.recs || [];
-  rec.recs.push({ sub, sc, lv, at: Date.now(), by: me.name });
+  rec.recs.push({ sub, sc, lv, type: type || "", at: Date.now(), by: me.name });
   if (rec.recs.length > 200) rec.recs = rec.recs.slice(-200);
   items[name] = rec;
+  grDoc = Object.assign({}, base, { name: me.school, items });
   client.publish(`${APP}/gr/${me.school}`, JSON.stringify({ name: me.school, items }), { retain: true, qos: 1 });
   renderGrades();
 }
 /* 分数自动预选等级（教师未手动改过时） */
 let grLevelTouched = false;
 $("grLevel").addEventListener("change", () => { grLevelTouched = true; });
+/* 当前全校评分标准（未取到时用系统默认：E≥98% · M≥70% · D≥60% · 满分 100） */
+function stdNow() { return stdDoc || STD_DEFAULT; }
+function fullNow() { return stdFull(stdNow()); }
+function renderStdNote() {
+  const el = $("grStdNote");
+  if (el) el.textContent = "当前全校标准：" + stdText(stdNow()) + "。";
+  const go = () => { location.href = "grading.html"; };
+  const vb = $("stdViewBtn"); if (vb) { vb.classList.remove("hidden"); vb.onclick = go; }
+  const sb = $("stdBtn"); if (sb) { sb.classList.toggle("hidden", !canGrade()); sb.onclick = go; }
+}
 $("grScore").addEventListener("input", () => {
   if (grLevelTouched) return;
   const raw = $("grScore").value.trim();
   if (!/^\d{1,3}(\.\d)?$/.test(raw)) return;
-  const v = +raw;
-  $("grLevel").value = v >= 90 ? "E" : v >= 80 ? "M" : v >= 60 ? "D" : "B";
+  $("grLevel").value = stdLevel(stdNow(), +raw);
 });
 $("grAdd").onclick = () => {
   if (!canGrade()) return;
@@ -1401,14 +1462,27 @@ $("grAdd").onclick = () => {
   const sub = $("grSubject").value.trim();
   const scRaw = $("grScore").value.trim();
   const lv = $("grLevel").value;
+  const type = $("grType").value;
   if (!nm) { toast("请选择学生", "warn"); return; }
   if (!sub || sub.length > 10) { toast("请填写科目（1-10 字）", "warn"); return; }
-  if (!/^\d{1,3}(\.\d)?$/.test(scRaw) || +scRaw > 150) { toast("分数需为 0-150 的数字（可带一位小数）", "warn", 5000); return; }
+  const full = fullNow();
+  if (!/^\d{1,3}(\.\d)?$/.test(scRaw) || +scRaw > full) { toast(`分数需为 0-${full} 的数字（可带一位小数）`, "warn", 5000); return; }
   if (!LV_ORDER.includes(lv)) { toast("请选择等级（E/M/D/B）", "warn"); return; }
-  submitGrade(nm, sub, +scRaw, lv);
-  $("grSubject").value = ""; $("grScore").value = ""; $("grLevel").value = ""; grLevelTouched = false;
-  toast(`已录入 <b>${esc(nm)}</b> 的${esc(sub)}成绩：${scRaw} 分（${lv} 级）`, "ok", 5000);
+  submitGrade(nm, sub, +scRaw, lv, type);
+  $("grSubject").value = ""; $("grScore").value = ""; $("grLevel").value = ""; $("grType").value = ""; grLevelTouched = false;
+  const typeLabel = type ? stdTypeLabel(stdNow(), type) : "";
+  toast(`已录入 <b>${esc(nm)}</b> 的${esc(sub)}成绩：${scRaw} 分（${lv} 级${typeLabel ? " · " + esc(typeLabel) : ""}）`, "ok", 5000);
 };
+/* 填充作业类型下拉（grType）：从当前全校标准的 types 生成选项；保留当前选择 */
+function renderGrTypes() {
+  const sel = $("grType"); if (!sel) return;
+  const cur = sel.value;
+  const ts = stdTypes(stdNow());
+  sel.innerHTML = '<option value="">作业类型…</option>' +
+    ts.map(t => `<option value="${escAttr(t.key)}">${esc(t.label)}（${fmtNum(t.pct)}%）</option>`).join("");
+  if (cur && Array.from(sel.options).some(o => o.value === cur)) sel.value = cur;
+}
+const escAttr = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 /* ================= 学况反馈（教师 → 家长，retained 离线不丢） ================= */
 /* 读取任意 retained 主题当前值（用于向他人主题追加数据前先取现状） */
 function probeDoc(topic) {
@@ -1619,6 +1693,235 @@ function renderSched() {
       LS.ssched(me.name, scheduled); renderSched();
       if (s.creatorName) sendFriendMsg(s.creatorName, { t: "schedno", code });
     };
+  });
+}
+/* ================= 学科圆环（仿"健康"活动圆环：内环=平均分/150，颜色=最近等级；金色外环=冲刺 goal 进度） ================= */
+function ringArc(r, w, p, col) {
+  const C = 2 * Math.PI * r;
+  const filled = (C * Math.max(0, Math.min(1, p))).toFixed(1);
+  return `<circle cx="60" cy="60" r="${r}" fill="none" stroke="var(--panel2)" stroke-width="${w}"></circle>` +
+    `<circle cx="60" cy="60" r="${r}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${filled} ${C.toFixed(1)}" transform="rotate(-90 60 60)"></circle>`;
+}
+function ringSvg(a, latestSc, goal) {
+  const col = LV_COLOR[a.lastLv] || "var(--accent)";
+  const full = fullNow();
+  const pct = Math.round(a.avg / full * 1000) / 10;   // 当前得分百分比，保留一位小数
+  /* 还需 N 个 E（每次按满分计）才能把平均分拉到 E 线 */
+  const st = stdNow();
+  const eScore = stdCut(st, "E");
+  let needE = 0, reached = false;
+  if (a.n > 0 && eScore > 0 && full > eScore) {
+    if (a.avg >= eScore) reached = true;
+    else needE = Math.ceil(a.n * (eScore - a.avg) / (full - eScore));
+    if (!isFinite(needE) || needE < 0) needE = 0;
+    if (needE > 99) needE = 99;   // 封顶，避免巨大无意义数字
+  } else if (a.n > 0 && a.avg >= eScore) {
+    reached = true;
+  }
+  const motivate = reached
+    ? `已抵达 E，棒极了！🎉`
+    : (a.n === 0 ? `暂无成绩，老师录入后会亮起来`
+        : `还需 ${needE} 个 E 以抵达 E，加油！💪`);
+  const motivateColor = reached ? "var(--ok)" : (a.n === 0 ? "var(--sub)" : col);
+  let svg = `<svg viewBox="0 0 120 120" width="106" height="106" style="display:block;margin:0 auto">` + ringArc(44, 11, a.avg / full, col);
+  if (goal) svg += ringArc(53, 4, latestSc / goal.sc, "#f0b400");
+  /* 中心：当前得分百分比（取代原"平均分"数字） */
+  svg += `<text x="60" y="58" text-anchor="middle" font-size="22" font-weight="bold" style="fill:var(--txt)">${pct}%</text>` +
+    `<text x="60" y="76" text-anchor="middle" font-size="10" style="fill:var(--sub)">当前得分</text>`;
+  if (goal) svg += `<text x="60" y="32" text-anchor="middle" font-size="11" font-weight="bold" style="fill:#f0b400">🎯 ${Math.round(Math.min(1, latestSc / goal.sc) * 100)}%</text>`;
+  svg += `</svg>`;
+  return `<div style="text-align:center;min-width:110px">${svg}` +
+    `<div style="font-size:13px;margin-top:2px"><b>${esc(a.sub)}</b>${goal ? `<span class="muted"> · 🎯 目标 ${goal.sc}</span>` : ""}</div>` +
+    `<div style="font-size:12px;margin-top:2px;color:${motivateColor}">${motivate}</div>` +
+    `<div class="muted" style="font-size:11px;margin-top:1px">${a.n} 次记录 · 最近 <b style="color:${col}">${esc(a.lastLv || "—")}</b></div></div>`;
+}
+function renderRings() {
+  const meetCard = $("ringCardMeet"), gradesCard = $("ringCardGrades");
+  if (!meetCard || !gradesCard) return;
+  const isParent = me.role === "parent", teacher = canGrade();
+  let target = "";
+  if (teacher) { const who = $("grWho"); target = who ? (who.value || "") : ""; }
+  else target = isParent ? (meAuth.child || "") : me.name;
+  meetCard.classList.toggle("hidden", me.role !== "student");
+  gradesCard.classList.toggle("hidden", !target);
+  const note = $("ringNote");
+  if (note) note.textContent = target ? "（" + esc(target) + (isParent ? " · 我的孩子" : target === me.name ? " · 我" : "") + "）" : "";
+  const avgs = target ? grAverages(target) : [];
+  /* 只有学生自己看自己的环时才叠加冲刺 goal 金环 */
+  const goalBySub = {};
+  if (target === me.name) {
+    const gs = (goalDoc && Array.isArray(goalDoc.items)) ? goalDoc.items : [];
+    gs.forEach(g => { if (g.tpl === "subScore" && !g.done) goalBySub[g.sub] = g; });
+  }
+  const latestBySub = {};
+  grRecsOf(target).forEach(r => { if (!latestBySub[r.sub] || (r.at || 0) > (latestBySub[r.sub].at || 0)) latestBySub[r.sub] = r; });
+  const html = avgs.length
+    ? avgs.map(a => ringSvg(a, latestBySub[a.sub] ? +latestBySub[a.sub].sc : 0, goalBySub[a.sub])).join("")
+    : `<p class="muted">${target ? "暂无成绩记录，老师录入成绩后这里会亮起来" : "请先选择要查看的学生"}</p>`;
+  $("ringBoxMeet").innerHTML = html;
+  $("ringBoxGrades").innerHTML = html;
+  /* SMART Goal 页也放一份学科圆环（学生看自己） */
+  const goalBox = $("ringBoxGoal");
+  if (goalBox) {
+    const goalAvgs = grAverages(me.name);
+    const gLatest = {};
+    grRecsOf(me.name).forEach(r => { if (!gLatest[r.sub] || (r.at || 0) > (gLatest[r.sub].at || 0)) gLatest[r.sub] = r; });
+    goalBox.innerHTML = goalAvgs.length
+      ? goalAvgs.map(a => ringSvg(a, gLatest[a.sub] ? +gLatest[a.sub].sc : 0, goalBySub[a.sub])).join("")
+      : `<p class="muted">暂无成绩记录，老师录入成绩后这里会亮起来</p>`;
+  }
+}
+/* ================= SMART Goal（学生专属：模板自动判定 / 自定义自己批准） ================= */
+/* retained 主题 APP/goal/<name>：{name, items:[{id, tpl:"allLevel"|"subScore"|"points"|null, text, sub?,lv?,sc?,pt?, done, doneAt, at}]} */
+const GOAL_TOPIC = () => `${APP}/goal/${me.name}`;
+const goalCache = n => { try { return JSON.parse(localStorage.getItem(APP + "_goal_" + n) || "null"); } catch (e) { return null; } };
+const goalSaveCache = () => { try { localStorage.setItem(APP + "_goal_" + me.name, JSON.stringify(goalDoc || { name: me.name, items: [] })); } catch (e) {} };
+/* 进入页面先用本地缓存渲染，retained 迟到时不空白 */
+if (me.role === "student") goalDoc = goalCache(me.name);
+/* 写前探测合并（同 submitPt 约定）：防同账号多设备并发写互相覆盖 */
+async function publishGoals(mutator) {
+  if (!client || !client.connected) { toast("连接尚未就绪，请稍后再试", "warn"); return false; }
+  const fresh = await probeDoc(GOAL_TOPIC()).catch(() => null);
+  const base = (fresh && Array.isArray(fresh.items)) ? fresh : (goalDoc && Array.isArray(goalDoc.items)) ? goalDoc : { name: me.name, items: [] };
+  const items = JSON.parse(JSON.stringify(base.items || []));
+  mutator(items);
+  goalDoc = { name: me.name, items };
+  goalSaveCache();
+  client.publish(GOAL_TOPIC(), JSON.stringify(goalDoc), { retain: true, qos: 1 });
+  renderGoals();
+  return true;
+}
+function syncGoals() { goalSaveCache(); renderGoals(); renderRings(); maybeGoalPrompt(); }
+/* 模板 goal 自动判定 */
+const lvRank = l => LV_ORDER.indexOf(l);
+function goalMet(g) {
+  if (g.tpl === "allLevel") {
+    const bySub = {};
+    grRecsOf(me.name).forEach(r => { if (!bySub[r.sub] || (r.at || 0) > (bySub[r.sub].at || 0)) bySub[r.sub] = r; });
+    const subs = Object.keys(bySub);
+    const t = lvRank(g.lv);
+    if (!subs.length || t < 0) return false;
+    return subs.every(s => lvRank(bySub[s].lv) >= 0 && lvRank(bySub[s].lv) <= t); // E 最好 → rank 越小越好
+  }
+  if (g.tpl === "subScore") {
+    const recs = grRecsOf(me.name).filter(r => r.sub === g.sub).sort((a, b) => (b.at || 0) - (a.at || 0));
+    return recs.length > 0 && (+recs[0].sc) >= (+g.sc);
+  }
+  if (g.tpl === "points") {
+    const it = ptDoc && ptDoc.items && ptDoc.items[me.name];
+    return !!(it && (+it.total) >= (+g.pt));
+  }
+  return false;
+}
+function evalGoals() {
+  if (me.role !== "student" || !goalDoc || !Array.isArray(goalDoc.items) || !client || !client.connected) return;
+  let changed = false;
+  goalDoc.items.forEach(g => {
+    if (g.done || !g.tpl) return;
+    if (goalMet(g)) {
+      g.done = true; g.doneAt = Date.now(); changed = true;
+      toast(`🎉 你的 goal「${esc(g.text)}」已达成，太棒了！`, "ok", 8000);
+    }
+  });
+  if (changed) { goalSaveCache(); client.publish(GOAL_TOPIC(), JSON.stringify(goalDoc), { retain: true, qos: 1 }); }
+}
+/* 每次进入主页提示一次：「你的 goal「xxx」已完成 x/y，请再接再厉」 */
+function maybeGoalPrompt(force) {
+  if (goalPromptShown || me.role !== "student") return;
+  const items = (goalDoc && Array.isArray(goalDoc.items)) ? goalDoc.items : null;
+  if (!items && !force) return; // retained 未到：等 6 秒兜底
+  goalPromptShown = true;
+  if (!items || !items.length) { toast("🎯 你还没有设置 SMART Goal，去「SMART Goal」页用模板或自定义创建一个吧", "", 7000); return; }
+  const done = items.filter(g => g.done).length;
+  const next = items.find(g => !g.done) || items[0];
+  toast(`🎯 你的 goal「${esc(next.text)}」已完成 ${done}/${items.length}，请再接再厉`, done === items.length ? "ok" : "", 8000);
+}
+/* ---------- 新建表单 ---------- */
+function goalTextOf(tpl) {
+  if (tpl === "allLevel") return "本学期全科都达到" + ($("goalLv").value || "M") + "及以上";
+  if (tpl === "subScore") return ($("goalSub").value.trim() || "某科") + "期末考试" + ($("goalSc").value.trim() || "…") + "分以上";
+  if (tpl === "points") return "学院分累计达到" + ($("goalPt").value.trim() || "…") + "分";
+  return $("goalText").value.trim() || "（未填写）";
+}
+function goalRows() {
+  const t = $("goalTpl").value;
+  $("goalRowAllLevel").classList.toggle("hidden", t !== "allLevel");
+  $("goalRowSubScore").classList.toggle("hidden", t !== "subScore");
+  $("goalRowPoints").classList.toggle("hidden", t !== "points");
+  $("goalRowCustom").classList.toggle("hidden", t !== "custom");
+  $("goalPreview").textContent = "目标预览：" + goalTextOf(t) + (t === "custom" ? "（自定义 goal，仅自己可批准完成）" : "（模板 goal，系统根据成绩 / 学院分自动判定）");
+}
+$("goalTpl").onchange = goalRows;
+["goalLv", "goalSub", "goalSc", "goalPt", "goalText"].forEach(id => $(id).addEventListener("input", goalRows));
+$("goalAdd").onclick = () => {
+  if (me.role !== "student") return;
+  if (!client || !client.connected) { toast("连接尚未就绪，请稍后再试", "warn"); return; }
+  const cur = (goalDoc && Array.isArray(goalDoc.items)) ? goalDoc.items : [];
+  if (cur.length >= 20) { toast("goal 最多 20 个，请先删除一些再创建", "warn"); return; }
+  const tpl = $("goalTpl").value;
+  const text = goalTextOf(tpl);
+  if (tpl === "custom" && (text.length < 2 || text.length > 100)) { toast("请填写 goal 描述（2-100 字）", "warn"); return; }
+  if (tpl === "subScore") {
+    const sub = $("goalSub").value.trim(), scRaw = $("goalSc").value.trim();
+    if (!sub || sub.length > 10) { toast("请填写科目（1-10 字）", "warn"); return; }
+    if (!/^\d{1,3}(\.\d)?$/.test(scRaw) || +scRaw < 1 || +scRaw > 150) { toast("目标分数需为 1-150 的数字", "warn"); return; }
+  }
+  if (tpl === "points") {
+    const pRaw = $("goalPt").value.trim();
+    if (!/^\d{1,5}$/.test(pRaw) || +pRaw < 1) { toast("目标学院分需为正整数", "warn"); return; }
+  }
+  const g = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), tpl: tpl === "custom" ? null : tpl, text, done: false, at: Date.now() };
+  if (tpl === "allLevel") g.lv = $("goalLv").value;
+  if (tpl === "subScore") { g.sub = $("goalSub").value.trim(); g.sc = +$("goalSc").value.trim(); }
+  if (tpl === "points") g.pt = +$("goalPt").value.trim();
+  publishGoals(items => { items.unshift(g); });
+  toast(`🎯 已创建 goal「${esc(text)}」`, "ok");
+  if (tpl === "custom") $("goalText").value = "";
+};
+function delGoal(id) {
+  if (!confirm("确定删除该 goal？")) return;
+  publishGoals(items => { const i = items.findIndex(x => x.id === id); if (i >= 0) items.splice(i, 1); });
+}
+/* 自定义 goal：仅自己可批准 / 撤销 */
+function toggleGoal(id) {
+  publishGoals(items => {
+    const g = items.find(x => x.id === id);
+    if (!g) return;
+    if (g.done) { g.done = false; delete g.doneAt; }
+    else { g.done = true; g.doneAt = Date.now(); }
+  });
+}
+/* ---------- 列表渲染 ---------- */
+function renderGoals() {
+  const tab = $("tabGoal");
+  if (!tab || me.role !== "student") return;
+  evalGoals();
+  goalRows();
+  const items = (goalDoc && Array.isArray(goalDoc.items)) ? goalDoc.items : [];
+  const done = items.filter(g => g.done).length;
+  $("goalSummary").textContent = items.length ? `已完成 ${done}/${items.length}` : "";
+  const box = $("goalList");
+  box.innerHTML = "";
+  if (!items.length) { box.innerHTML = '<p class="muted">还没有 goal，用上方模板或自定义创建第一个吧。</p>'; return; }
+  items.forEach(g => {
+    const d = document.createElement("div");
+    d.className = "pitem";
+    const st = g.done ? '<b style="color:var(--ok)">✅ 已完成</b>'
+      : `<b style="color:var(--warn)">⏳ 进行中${g.tpl ? "（自动判定）" : ""}</b>`;
+    d.innerHTML = `<span class="n">${st} <span>${esc(g.text)}</span></span>` +
+      `<span class="muted">${g.tpl ? "模板" : "自定义"} · 创建于 ${fmtTime(g.at)}${g.done && g.doneAt ? " · 完成于 " + fmtTime(g.doneAt) : ""}</span>`;
+    if (!g.tpl) {
+      const b = document.createElement("button");
+      b.className = g.done ? "ghost" : "ok";
+      b.textContent = g.done ? "撤销完成" : "批准完成";
+      b.onclick = () => toggleGoal(g.id);
+      d.appendChild(b);
+    }
+    const del = document.createElement("button");
+    del.className = "danger"; del.textContent = "删除";
+    del.onclick = () => delGoal(g.id);
+    d.appendChild(del);
+    box.appendChild(d);
   });
 }
 /* ================= 退出 / 启动 ================= */

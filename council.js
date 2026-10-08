@@ -21,6 +21,11 @@ $("gateBack").onclick = () => location.href = "main.html";
 $("backBtn").onclick = () => location.href = "main.html";
 $("connState").textContent = "连接中…";
 function connect() {
+  if (typeof mqtt === "undefined") {
+    $("connState").textContent = "通信库加载失败，请刷新重试";
+    toast("MQTT 通信库加载失败（网络受限？），请刷新页面重试", "warn", 12000);
+    return;
+  }
   client = mqtt.connect(BROKER, {
     clientId: APP + "_cn_" + me.uid + "_" + me.dev + "_" + Math.random().toString(36).slice(2, 6),
     keepalive: 30, clean: true, connectTimeout: 8000,
@@ -41,7 +46,7 @@ function connect() {
   client.on("error", () => { $("connState").textContent = "连接异常…"; });
   client.on("message", (topic, payload) => {
     let m; try { m = JSON.parse(payload.toString()); } catch (e) { return; }
-    if (topic === `${APP}/school/${me.school}`) { if (m && m.name) schoolRec = m; checkMember(); return; }
+    if (topic === `${APP}/school/${me.school}`) { if (m && m.name) { schoolRec = m; window.__ROSTER__ = (schoolRec.members) || []; } checkMember(); return; }
     if (topic === DOC) { if (m && m.name) cnDoc = m; else cnDoc = null; checkMember(); return; }
     if (topic === CHAT) return onChat(m);
     if (topic.startsWith(APP + "/u/")) {
@@ -78,7 +83,6 @@ function adminsOf() {
   return [];
 }
 function checkMember() {
-  const was = isMember;
   isAdmin = adminsOf().includes(me.name);
   isMember = !!cnDoc && Array.isArray(cnDoc.members) && cnDoc.members.includes(me.name);
   const adm = (cnDoc && cnDoc.members) || [];
@@ -86,38 +90,46 @@ function checkMember() {
   if (!isAdmin && !isMember) {
     // 等待数据后再判定（schoolRec/cnDoc 未到时先不拦截）
     if (!schoolRec && !cnDoc) { return; }
+    joined = false;   // 被移出群后重置，再次被拉入时可完整恢复界面
     renderGate();
     return;
   }
-  if (was !== isMember || isAdmin) { joinIn(); }
+  // 每次学校 / 学生会记录更新都重渲染（会议发起 / 结束、成员变化即时反映）
+  joinIn();
 }
 let joined = false;
 function joinIn() {
   if (joined) { renderAll(); return; }
   joined = true;
   if (client && client.connected) {
-    client.subscribe(CHAT);
+    if (!isAdmin) client.subscribe(CHAT);   /* 管理员只管成员，不参与学生会聊天 */
     client.subscribe(`${APP}/u/${me.name}/${me.dev}`);
     client.publish(`${APP}/u/${me.name}/${me.dev}`, JSON.stringify({ uid: me.uid, dev: me.dev, online: true }), { retain: true });
   }
   $("gate").classList.add("hidden");
   $("scr-council").classList.remove("hidden");
-  $("councilName").textContent = "🏫 " + me.school + " · " + me.name + (isAdmin ? " · 管理员" : " · 学生会成员");
+  $("councilName").innerHTML = "🏫 " + esc(me.school) + " · " + esc(me.name) + (isAdmin ? " · 管理员（成员管理）" : " · 学生会成员");
   $("adminBox").classList.toggle("hidden", !isAdmin);
   $("askBtn").classList.toggle("hidden", isAdmin);
+  if (isAdmin) {
+    /* 管理员精简视图：只保留右侧成员管理，隐藏聊天与会议 */
+    $("cnChatBox").classList.add("hidden");
+    $("cnMeetSec").classList.add("hidden");
+    $("cnHeadTtl").textContent = "👥 学生会成员管理";
+    document.querySelector(".body").classList.add("admin-only");
+  }
   renderAll();
 }
 function renderAll() {
   renderHint();
-  renderReqBox();
-  renderMeetBox();
+  if (!isAdmin) renderMeetBox();
   renderMembers();
   if (isAdmin) renderPullOptions();
 }
 function renderHint() {
   const h = $("councilHint");
-  if (isAdmin) h.textContent = "你是管理员：可批准学生发起的会议、拉学生进群、直接发起会议。";
-  else h.textContent = "你是学生会成员：可自由发言、询问管理员、申请发起会议（需批准）。";
+  if (isAdmin) h.textContent = "管理员仅负责成员管理（右侧拉学生进群 / 移出）；聊天与会议由学生会自主进行。";
+  else h.textContent = "你是学生会成员：可自由发言、直接发起会议、@管理员会提醒对方。";
 }
 /* ================= 群成员 / 拉人 ================= */
 function memberList() {
@@ -203,20 +215,13 @@ function pushMsg(m, mine) {
     const d = document.createElement("div");
     d.className = "msg call";
     const hostMe = m.host === me.name;
-    const adminTake = isAdmin && !hostMe;
     d.innerHTML = `<div class="mname">🎥 ${esc(m.hostName || m.host || "")} 发起了学生会会议</div>
       <b>${esc(m.title || "学生会会议")}</b> · 主题：${esc(m.reason || m.title || "")} · 会议码 <b>${esc(m.code)}</b>
       <div class="cbtns">${hostMe
         ? '<button class="primary" data-a="host">进入会议（主持）</button><button class="danger" data-a="end">结束会议</button>'
-        : adminTake
-          ? '<button class="primary" data-a="ahost">以管理员身份主持</button><button data-a="join">申请加入</button><button class="danger" data-a="end">结束会议</button>'
-          : '<button class="primary" data-a="join">点击申请加入</button>'}</div>`;
+        : '<button class="primary" data-a="join">加入会议</button>'}</div>`;
     const bind = (a, fn) => { const b = d.querySelector("[data-a='" + a + "']"); if (b) b.onclick = fn; };
     bind("host", () => { launchMeeting({ code: m.code, title: m.title, role: "host", from: "council", reason: m.reason }); });
-    bind("ahost", () => {
-      if (!confirm("你要以管理员身份接管主持这个会议吗？")) return;
-      launchMeeting({ code: m.code, title: m.title, role: "host", from: "council", reason: m.reason });
-    });
     bind("join", () => { launchMeeting({ code: m.code, title: m.title, role: "guest", from: "council" }); });
     bind("end", () => endMeeting(m.code));
     log.appendChild(d);
@@ -243,7 +248,6 @@ function onChat(m) {
   if (m.from === me.uid && m.dev === me.dev) return;
   pushMsg(m, false);
   if (m._invite && m.t === "invite") toast(`<b>${esc(m.fromName || "")}</b> 邀请加入会议 ${esc(m.code)}`, "ok", 6000);
-  if (m.t === "call" && isAdmin && m.reqBy && m.reqBy !== me.name) toast(`📢 <b>${esc(m.reqBy)}</b> 申请发起的会议已创建`, "ok", 6000);
 }
 function pushSys(text) {
   client.publish(CHAT, JSON.stringify({ t: "sys", text, at: Date.now(), from: me.uid, dev: me.dev, fromName: me.name }), { qos: 0 });
@@ -251,6 +255,8 @@ function pushSys(text) {
 function chatSend() {
   const v = $("chatMsg").value.trim();
   if (!v) return;
+  if (!client) { toast("通信组件未加载（右上角一直是「连接中…」？请刷新页面）", "warn", 6000); return; }
+  if (!client.connected) toast("连接尚未就绪，消息将在连接恢复后自动送达", "warn", 4000);
   const atAdmin = v.startsWith("@管理员") || v.startsWith("@admin") || v.includes("@管理员");
   const all = v.includes("@全体成员");
   if (all && !isAdmin) { toast("只有管理员可以 @全体成员", "warn"); return; }
@@ -270,70 +276,23 @@ $("chatMsg").addEventListener("keydown", e => { if (e.isComposing || e.keyCode =
 attachEmoji($("chatMsg"), $("chatEmoji"));
 attachMention($("chatMsg"), () => ["管理员", "全体成员"].concat(memberList()).filter(n => n !== me.name));
 function sendGif(gif) {
+  if (!client) { toast("通信组件未加载，请刷新页面重试", "warn", 6000); return; }
   client.publish(CHAT, JSON.stringify({ t: "msg", kind: "gif", gif, at: Date.now(), from: me.uid, dev: me.dev, fromName: me.name }), { qos: 0 });
   pushMsg({ t: "msg", kind: "gif", gif, from: me.uid, dev: me.dev, fromName: me.name, at: Date.now() }, true);
 }
 attachSticker($("chatGif"), sendGif);
 attachGifPaste($("chatMsg"), sendGif);
 $("askBtn").onclick = () => promptModal("向管理员提问（学生可自由询问管理员）", "发送", q => {
+  if (!client) { toast("通信组件未加载，请刷新页面重试", "warn", 6000); return; }
   client.publish(CHAT, JSON.stringify({ t: "msg", text: "【询问管理员】" + q, at: Date.now(), ask: true, from: me.uid, dev: me.dev, fromName: me.name }), { qos: 0 });
   pushMsg({ t: "msg", text: "【询问管理员】" + q, from: me.uid, dev: me.dev, fromName: me.name, at: Date.now() }, true);
   toast("已发送给管理员", "ok", 3000);
 });
-/* ================= 申请 / 审批 / 会议 ================= */
+/* ================= 发起 / 进行中的会议 ================= */
 $("reqMeetBtn").onclick = () => {
-  if (isAdmin) {
-    // 管理员无需申请，直接以自己名义发起
-    promptModal("发起学生会会议（填主题，如：想搞项目‘纸飞机大赛’）", "创建", t => startMeeting(me.name, me.name, t));
-    return;
-  }
-  promptModal("申请发起学生会会议（填主题与理由，如：想搞项目‘纸飞机大赛’，需要组织同学）", "提交申请", reason => {
-    const reqs = ((cnDoc && cnDoc.reqs) || []).filter(r => r.by !== me.name);
-    reqs.push({ by: me.name, byName: me.name, title: reason, reason, at: Date.now() });
-    publishDoc({ reqs });
-    pushSys(`${me.name} 提交了会议申请：${reason}`);
-    toast("申请已提交，等待管理员批准", "ok", 5000);
-  });
+  /* 学生会自治：成员直接发起会议，无需管理员批准 */
+  promptModal("发起学生会会议（填主题，如：想搞项目‘纸飞机大赛’）", "创建", t => startMeeting(me.name, me.name, t));
 };
-function renderReqBox() {
-  const box = $("reqBox");
-  const reqs = (cnDoc && Array.isArray(cnDoc.reqs) ? cnDoc.reqs : []);
-  box.innerHTML = "";
-  if (!reqs.length) { box.innerHTML = '<p class="muted">暂无申请</p>'; return; }
-  reqs.forEach(r => {
-    const d = document.createElement("div");
-    d.className = "req-item";
-    d.innerHTML = `<b>${esc(r.byName || r.by)}</b> 想发起会议<br>主题：${esc(r.reason || r.title || "")}<span class="muted"> · ${fmtTime(r.at)}</span>`;
-    if (isAdmin) {
-      const bar = document.createElement("div");
-      bar.className = "row2";
-      const ok = document.createElement("button"); ok.className = "primary"; ok.textContent = "✓ 批准";
-      ok.onclick = () => approveReq(r);
-      const no = document.createElement("button"); no.className = "danger"; no.textContent = "✗ 拒绝";
-      no.onclick = () => {
-        if (!confirm("拒绝该会议申请？")) return;
-        publishDoc({ reqs: reqs.filter(x => x !== r) });
-        pushSys(`管理员拒绝了 ${r.byName} 的会议申请`);
-      };
-      bar.append(ok, no);
-      d.appendChild(bar);
-    } else {
-      const p = document.createElement("p");
-      p.className = "muted";
-      p.textContent = "等待管理员批准…";
-      d.appendChild(p);
-    }
-    box.appendChild(d);
-  });
-}
-function approveReq(r) {
-  if (!isAdmin) return;
-  const reqs = ((cnDoc && cnDoc.reqs) || []).filter(x => x !== r);
-  const meeting = { code: genCode(), title: r.reason || r.title || "学生会会议", reason: r.reason || r.title || "", host: r.by, hostName: r.byName || r.by, at: Date.now(), reqBy: r.by, reqByName: r.byName || r.by };
-  publishDoc({ reqs, meeting });
-  client.publish(CHAT, JSON.stringify(Object.assign({ t: "call", code: meeting.code, title: meeting.title, reason: meeting.reason, host: meeting.host, hostName: meeting.hostName, reqBy: meeting.reqBy, at: Date.now() }, { from: me.uid, dev: me.dev, fromName: me.name })), { qos: 0 });
-  toast("已批准 <b>" + esc(r.byName || r.by) + "</b> 的会议申请，会议已发布到群里", "ok", 6000);
-}
 function startMeeting(host, hostName, title) {
   const code = genCode();
   const meeting = { code, title, reason: title, host, hostName, at: Date.now() };
@@ -346,13 +305,12 @@ function renderMeetBox() {
   const mt = cnDoc && cnDoc.meeting;
   box.innerHTML = "";
   if (!mt) {
-    box.innerHTML = '<p class="muted">当前没有进行中的会议。学生会成员可点“📢 申请发起会议”；管理员可直接发起。</p>';
+    box.innerHTML = '<p class="muted">当前没有进行中的会议。学生会成员可点“📢 发起会议”直接开始。</p>';
     return;
   }
   const d = document.createElement("div");
   d.className = "panel-card";
   const hostMe = mt.host === me.name;
-  const adminTake = isAdmin && !hostMe;
   d.innerHTML = `<p>🎥 <b>${esc(mt.hostName || mt.host)}</b> 会议中</p>
     <p><b>主题：${esc(mt.title || "")}</b></p><p class="muted">会议码 ${esc(mt.code)} · ${fmtTime(mt.at)}</p>`;
   const bar = document.createElement("div");
@@ -363,22 +321,8 @@ function renderMeetBox() {
     const b2 = document.createElement("button"); b2.className = "danger"; b2.textContent = "结束会议";
     b2.onclick = () => endMeeting(mt.code);
     bar.append(b1, b2);
-  } else if (adminTake) {
-    const b1 = document.createElement("button"); b1.className = "primary"; b1.textContent = "接管主持";
-    b1.onclick = () => {
-      if (!confirm("以管理员身份接管主持这个会议？")) return;
-      const meeting = Object.assign({}, mt, { host: me.name, hostName: me.name });
-      publishDoc({ meeting });
-      pushSys(`管理员 ${me.name} 接管了会议主持`);
-      launchMeeting({ code: mt.code, title: mt.title, role: "host", from: "council", reason: mt.reason });
-    };
-    const b2 = document.createElement("button"); b2.textContent = "申请加入";
-    b2.onclick = () => launchMeeting({ code: mt.code, title: mt.title, role: "guest", from: "council" });
-    const b3 = document.createElement("button"); b3.className = "danger"; b3.textContent = "结束会议";
-    b3.onclick = () => endMeeting(mt.code);
-    bar.append(b1, b2, b3);
   } else {
-    const b1 = document.createElement("button"); b1.className = "primary"; b1.textContent = "点击申请加入";
+    const b1 = document.createElement("button"); b1.className = "primary"; b1.textContent = "加入会议";
     b1.onclick = () => launchMeeting({ code: mt.code, title: mt.title, role: "guest", from: "council" });
     bar.appendChild(b1);
   }

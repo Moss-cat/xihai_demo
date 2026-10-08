@@ -402,7 +402,9 @@ window.addEventListener("beforeunload", () => {
   try { if (M) sendMeet("left"); } catch (e) {}
 });
 /* ---- 启动 ---- */
-client = mqtt.connect(BROKER, {
+if (typeof mqtt === "undefined") {
+  $("connState").textContent = "通信库加载失败，请刷新重试";
+} else client = mqtt.connect(BROKER, {
   clientId: APP + "_room_" + me.uid + "_" + me.dev + "_" + Math.random().toString(36).slice(2, 6),
   keepalive: 30, clean: true, connectTimeout: 8000,
   will: { topic: `${APP}/u/${me.name}/${me.dev}`, payload: JSON.stringify({ uid: me.uid, dev: me.dev, online: false }), retain: true, qos: 0 }
@@ -411,11 +413,17 @@ client.on("connect", () => {
   $("connState").textContent = "已连接";
   client.subscribe(`${APP}/u/${me.name}/${me.dev}`);
   client.publish(`${APP}/u/${me.name}/${me.dev}`, JSON.stringify({ uid: me.uid, dev: me.dev, online: true }), { retain: true });
+  if (me.school) client.subscribe(`${APP}/school/${me.school}`);   /* 拉成员名单：EN 模式显示英文名 */
   connectUser();
   startMeeting();
 });
 client.on("message", (topic, payload) => {
   let m; try { m = JSON.parse(payload.toString()); } catch (e) { return; }
+  if (topic === `${APP}/school/${me.school}`) {
+    window.__ROSTER__ = (m && m.members) || [];
+    renderSidePanel();
+    return;
+  }
   if (topic.startsWith(APP + "/fr/")) return onFriendMsg(topic, m);
   if (topic.startsWith(APP + "/u/")) {
     const parts = topic.split("/");
