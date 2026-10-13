@@ -160,6 +160,8 @@ main{padding:18px 20px;overflow-y:auto}
         <button data-tab="points" id="tbPoints" class="hidden" data-t="tab.points">⭐ 学院分</button>
         <button data-tab="grades" id="tbGrades" class="hidden" data-t="tab.grades">📈 成绩</button>
         <button data-tab="goal" id="tbGoal" class="hidden" data-t="tab.goal">🎯 SMART Goal</button>
+        <button data-tab="lms" id="tbLms" class="hidden" data-t="tab.lms">📚 LMS</button>
+        <button data-tab="feed" id="tbFeed" class="hidden" data-t="tab.feed">📰 更新日志</button>
         <button data-tab="tt" id="tbTt" class="hidden" data-t="tab.tt">📅 课表</button>
         <button data-tab="stu" id="tbStu" class="hidden" data-t="tab.stu">👥 学生管理</button>
         <button data-tab="school" id="tbSchool" class="hidden" data-t="tab.school">🏫 学校管理</button>
@@ -483,6 +485,20 @@ main{padding:18px 20px;overflow-y:auto}
           <div class="dropzone" id="dropTch"><b>🧑‍🏫 教师表格</b>：拖入 .xlsx / .xls / .csv<br><span class="muted">第一列 姓名 · 第二列 班主任 / 非班主任 · 第三列 班级（班主任必填，如 6B；非班主任留空）· 第四列 密码 · 第五 / 六列可选 First name / Last name（英文名，英文模式显示用）</span></div>
           <p class="muted">导入前会逐行校验并预览，确认无误后才会批量创建账号（家长账号不在此创建，家长自行注册）。</p>
           <div id="batchPreview"></div>
+        </div>
+      </div>
+      <!-- LMS 自学 -->
+      <div id="tabLms" class="hidden">
+        <div class="card">
+          <h3>📚 LMS · 自学</h3>
+          <p class="muted">这里将放置自学计划、学习资源等内容，敬请期待。</p>
+        </div>
+      </div>
+      <!-- 更新日志（系统公告） -->
+      <div id="tabFeed" class="hidden">
+        <div class="card">
+          <h3>📰 更新日志 <span class="sub">（系统更新与新功能说明）</span></h3>
+          <div id="feedBox"></div>
         </div>
       </div>
     </main>

@@ -202,7 +202,7 @@ function renderAllUI() {
   renderSchoolMembers(); renderStudentList();
   renderPoints();
   renderGrades(); renderRings(); renderTt(); renderReports();
-  renderGoals();
+  renderGoals(); renderFeed();
   renderClassUI();
   renderBroadcastUI();
   renderPcUI();
@@ -226,13 +226,15 @@ function renderTabs() {
   $("tbGrades").classList.remove("hidden"); // 成绩：学生/家长查看 · 教师录入
   $("tbTt").classList.toggle("hidden", !(me.role === "teacher" || me.role === "admin")); // 课表：教师专属
   $("tbGoal").classList.toggle("hidden", me.role !== "student"); // SMART Goal：学生专属
+  $("tbLms").classList.remove("hidden");   // LMS 自学：所有人可见
+  $("tbFeed").classList.remove("hidden");  // 更新日志：所有人可见
   const showStuSchool = isAdmin;
   $("tbStu").classList.toggle("hidden", !showStuSchool);
   $("tbSchool").classList.toggle("hidden", !showStuSchool);
   showTab(isParent ? "parent" : "meet");
 }
 function showTab(t) {
-  ["meet", "class", "broadcast", "parent", "prq", "points", "grades", "goal", "tt", "stu", "school"].forEach(n => {
+  ["meet", "class", "broadcast", "parent", "prq", "points", "grades", "goal", "lms", "feed", "tt", "stu", "school"].forEach(n => {
     const el = $("tab" + n.charAt(0).toUpperCase() + n.slice(1));
     if (el) el.classList.toggle("hidden", n !== t);
   });
@@ -1923,6 +1925,36 @@ function renderGoals() {
     d.appendChild(del);
     box.appendChild(d);
   });
+}
+/* ================= 更新日志（系统公告：由开发者发布，所有人可见） ================= */
+/* 系统更新日志：由 AI 开发者在代码里直接写入，记录新功能、用法说明等，所有人可见 */
+const CHANGELOG = [
+  {
+    v: "1.3.0", date: "2026-10-12",
+    title: "📚 新增 LMS 自学页面 + 📰 更新日志",
+    body: "新增「LMS 自学」tab（所有人可见），后续将支持自学计划、学习资源等功能。\n新增「更新日志」tab，系统每次更新都会在这里说明新功能和用法。"
+  },
+  {
+    v: "1.2.0", date: "2026-10-11",
+    title: "🎯 SMART Goal 学科圆环",
+    body: "SMART Goal 页面新增学科圆环展示，环中心显示当前得分百分比，下方提示还需多少个 E 可抵达 E 等级。金色细环表示该科 subScore goal 的进度。"
+  },
+  {
+    v: "1.1.0", date: "2026-10-05",
+    title: "📊 评分标准支持作业类型与权重",
+    body: "「调整评分标准」页面新增作业类型管理（项目/期末/期中/classwork/作业），可自定义每类占比。成绩录入时需选择作业类型，圆环和等级按加权计算。"
+  }
+];
+/* 渲染系统更新日志 */
+function renderFeed() {
+  const box = $("feedBox"); if (!box) return;
+  box.innerHTML = CHANGELOG.map(it => {
+    return `<div class="card" style="margin-bottom:12px;background:var(--panel2)">` +
+      `<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px">` +
+      `<h3 style="margin:0">${esc(it.title)}</h3>` +
+      `<span class="muted" style="font-size:12px">v${esc(it.v)} · ${esc(it.date)}</span></div>` +
+      `<p style="margin:8px 0 0;white-space:pre-wrap;line-height:1.6">${esc(it.body)}</p></div>`;
+  }).join("");
 }
 /* ================= 退出 / 启动 ================= */
 $("logoutBtn").onclick = () => {
