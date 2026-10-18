@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>评分标准 · 嘻嗨校园</title>
+<link rel="icon" href="icon_no_white.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
 <script>if (typeof mqtt === "undefined") document.write('<script src="https:\/\/unpkg.com\/mqtt@4.3.7\/dist\/mqtt.min.js"><\/script>');</script>
 <script src="i18n.js"></script>
@@ -27,7 +28,10 @@ textarea{resize:vertical;font-family:inherit}
 .muted{color:var(--sub);font-size:12px}
 .screen{position:fixed;inset:0;display:flex;flex-direction:column}
 header.top{display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
-header.top .logo{font-weight:bold;font-size:16px}
+header.top .logo{display:inline-flex;align-items:center;gap:7px;font-weight:bold;font-size:16px}
+header.top .logo .logo-icon{height:24px;width:auto;display:block}
+header.top .logo .logo-word{height:15px;width:auto;display:block}
+[data-theme="dark"] .logo-word{filter:invert(1)}
 header.top .who{color:var(--sub);font-size:12px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 header.top .grow{flex:1}
 header.top select{width:auto;padding:4px 8px;font-size:12px;background:var(--panel2)}
@@ -70,7 +74,7 @@ header.top select{width:auto;padding:4px 8px;font-size:12px;background:var(--pan
 
 <div id="scr-std" class="screen hidden">
   <header class="top">
-    <span class="logo">📐 评分标准</span>
+    <span class="logo"><img class="logo-icon" src="icon_no_white.png" alt="嘻嗨校园"><img class="logo-word" src="WORD.png" alt="XiHai"></span>
     <span class="who" id="whoLabel"></span>
     <span class="grow"></span>
     <span class="who" id="permState" title="身份与编辑权限检测">🔍 检测中…</span>

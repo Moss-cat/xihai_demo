@@ -9,6 +9,10 @@ bindLang({
   "tab.prq": { zh: "📨 家长消息", en: "📨 Parent Msgs" },
   "tab.points": { zh: "⭐ 学院分", en: "⭐ Points" },
   "tab.grades": { zh: "📈 成绩", en: "📈 Grades" },
+  "tab.goal": { zh: "🎯 SMART Goal", en: "🎯 SMART Goal" },
+  "tab.lms": { zh: "📚 LMS", en: "📚 LMS" },
+  "tab.feed": { zh: "📰 更新日志", en: "📰 Changelog" },
+  "tab.notif": { zh: "🔔 通知", en: "🔔 Notifications" },
   "tab.tt": { zh: "📅 课表", en: "📅 Timetable" },
   "tab.stu": { zh: "👥 学生管理", en: "👥 Students" },
   "tab.school": { zh: "🏫 学校管理", en: "🏫 School" },
@@ -18,7 +22,7 @@ bindLang({
 const sess = LS.session();
 if (!sess || !sess.name || !sess.uid) {
   $("gateOverlay").classList.remove("hidden");
-  location.replace("index.html");
+  location.replace("signin.html");
 }
 let me = { uid: sess ? sess.uid : "", name: sess ? sess.name : "", dev: LS.devid(), school: sess ? (sess.school || "") : "", role: sess ? (sess.role || "") : "" };
 let client = null;
@@ -34,10 +38,13 @@ let ttDoc = null;      // 我的课表（教师）{list:[{day,st,en,grade,cls,su
 let repDoc = null;     // 老师发来的学况反馈（家长）{items:[{from,child,text,at}]}
 let goalDoc = null;    // 我的 SMART Goal（学生）{name, items:[{id,tpl,text,sub?,lv?,sc?,pt?,done,doneAt,at}]}
 let stdDoc = null;     // 全校评分标准（retained APP/std/<校>）{school,full,mode:"pct"|"abs",E,M,D,by,at}
+let notifDoc = null;   // 全校通知（retained APP/notif/<校>）{name, items:[{id,by,byName,text,imgs,at,likes,comments}]}
 let goalPromptShown = false; // 每次进入主页只提示一次 goal 进度
 let myClass = null;    // {grade,cls}
 let clTopic = "";      // 我的班级群 topic
 let clMembers = [];    // 班级成员 [{name,role,grade,cls,isClassTeacher}]
+let clMsgs = [];       // 班级群消息缓存（localStorage 持久化，reload 后恢复）
+let pcMsgs = [];       // 家长群消息缓存
 let isAdmin = false;   // 是否管理员（按 admins 数组/admin/creator 兼容判定）
 let classSetupDone = false; // buildClass + autoFriend 仅执行一次
 let parentClass = null; // 家长：孩子所在班级 {grade,cls}（由 schoolRec 中孩子的年级/班级推导）
@@ -90,6 +97,7 @@ function connect() {
       client.subscribe(`${APP}/pt/${me.school}`);
       client.subscribe(`${APP}/gr/${me.school}`); // 成绩（retained，全校）
       client.subscribe(`${APP}/std/${me.school}`); // 评分标准（retained，全校）
+      client.subscribe(`${APP}/notif/${me.school}`); // 通知（retained，全校）
     }
     client.publish(`${APP}/u/${me.name}/${me.dev}`, JSON.stringify({ uid: me.uid, dev: me.dev, online: true }), { retain: true });
     refresh();
@@ -108,6 +116,7 @@ function connect() {
     if (topic.startsWith(APP + "/pt/")) { ptDoc = (m && (m.name || m.items)) ? m : { name: me.school, items: {} }; tryRenderAll(); return; }
     if (topic.startsWith(APP + "/gr/")) { grDoc = (m && (m.name || m.items)) ? m : { name: me.school, items: {} }; tryRenderAll(); return; }
     if (topic.startsWith(APP + "/std/")) { stdDoc = stdNorm(m); renderGrades(); renderRings(); return; }
+    if (topic.startsWith(APP + "/notif/")) { notifDoc = (m && (m.name || m.items)) ? m : { name: me.school, items: [] }; renderNotif(); return; }
     /* 课表 / 学况只认自己的主题：probeDoc 探测他人 rep 主题时，retained 消息不能污染本地 ttDoc/repDoc */
     if (topic === `${APP}/tt/${me.name}`) { ttDoc = (m && Array.isArray(m.list)) ? m : null; renderTt(); return; }
     if (topic === `${APP}/rep/${me.name}`) { repDoc = (m && Array.isArray(m.items)) ? m : { items: [] }; renderReports(); return; }
@@ -132,6 +141,7 @@ function refresh() {
   client.subscribe(`${APP}/pt/${me.school}`);
   client.subscribe(`${APP}/gr/${me.school}`);
   client.subscribe(`${APP}/std/${me.school}`); // 评分标准 retained 兜底补订阅
+  client.subscribe(`${APP}/notif/${me.school}`); // 通知 retained 兜底补订阅
   client.subscribe(`${APP}/goal/${me.name}`); // SMART Goal retained 兜底补订阅
 }
 /* auth 同步：会话里的角色/班级可能被管理员改动或注册时补充，以 retained auth 为准 */
@@ -202,7 +212,7 @@ function renderAllUI() {
   renderSchoolMembers(); renderStudentList();
   renderPoints();
   renderGrades(); renderRings(); renderTt(); renderReports();
-  renderGoals(); renderFeed();
+  renderGoals(); renderFeed(); renderNotif();
   renderClassUI();
   renderBroadcastUI();
   renderPcUI();
@@ -228,13 +238,16 @@ function renderTabs() {
   $("tbGoal").classList.toggle("hidden", me.role !== "student"); // SMART Goal：学生专属
   $("tbLms").classList.remove("hidden");   // LMS 自学：所有人可见
   $("tbFeed").classList.remove("hidden");  // 更新日志：所有人可见
+  $("tbNotif").classList.remove("hidden"); // 通知：所有人可见（教师可发布，学生/家长可点赞评论）
   const showStuSchool = isAdmin;
   $("tbStu").classList.toggle("hidden", !showStuSchool);
   $("tbSchool").classList.toggle("hidden", !showStuSchool);
-  showTab(isParent ? "parent" : "meet");
+  showTab(curTab);   // 保持当前 tab，不因 MQTT 数据刷新而跳走
 }
+let curTab = "notif";   // 当前 tab（renderTabs 不应重置它）
 function showTab(t) {
-  ["meet", "class", "broadcast", "parent", "prq", "points", "grades", "goal", "lms", "feed", "tt", "stu", "school"].forEach(n => {
+  curTab = t;
+  ["notif", "meet", "class", "broadcast", "parent", "prq", "points", "grades", "goal", "lms", "feed", "tt", "stu", "school"].forEach(n => {
     const el = $("tab" + n.charAt(0).toUpperCase() + n.slice(1));
     if (el) el.classList.toggle("hidden", n !== t);
   });
@@ -260,6 +273,20 @@ function buildClass() {
   clMembers = classMembersOf();
   // 订阅班级成员的在线状态
   clMembers.forEach(x => client.subscribe(`${APP}/u/${x.name}/+`));
+  restoreClMsgs();   // 恢复本地缓存的班级群聊天记录
+}
+/* 班级群消息本地缓存：reload（如切换语言）后恢复，上限 200 条 */
+const CL_CACHE_MAX = 200;
+function clCacheKey() { return `${APP}_clcache_${me.school}_${myClass ? myClass.grade + myClass.cls : ""}`; }
+function saveClMsgs() {
+  try { localStorage.setItem(clCacheKey(), JSON.stringify(clMsgs.slice(-CL_CACHE_MAX))); } catch (e) {}
+}
+function restoreClMsgs() {
+  const log = $("clsLog"); if (!log) return;
+  log.innerHTML = "";
+  try { clMsgs = JSON.parse(localStorage.getItem(clCacheKey()) || "[]"); } catch (e) { clMsgs = []; }
+  clMsgs.forEach(m => appendClMsgDOM(m, m.from === me.uid));
+  log.scrollTop = log.scrollHeight;
 }
 function renderClassUI() {
   if (!myClass) return;
@@ -292,6 +319,18 @@ function onClMsg(m) {
   }
 }
 function appendClMsg(m, mine) {
+  clMsgs.push(m);
+  if (clMsgs.length > CL_CACHE_MAX) clMsgs.shift();
+  saveClMsgs();
+  appendClMsgDOM(m, mine);
+}
+/* 微信风格翻译行：英文模式下，含中文的文本消息下方显示译文 */
+function transHtml(text) {
+  if (!window.__I18N_EN || !text || !/[\u4e00-\u9fa5]/.test(String(text))) return "";
+  const tr = (typeof window.TR === "function") ? window.TR(String(text)) : String(text);
+  return `<div class="trans">${escPlain(tr)}</div>`;
+}
+function appendClMsgDOM(m, mine) {
   const log = $("clsLog");
   if (!log) return;
   const d = document.createElement("div");
@@ -315,13 +354,13 @@ function appendClMsg(m, mine) {
   } else if (m.t === "bc") {
     d.className = "msg bc";
     d.innerHTML = `<div class="bchead">📢 ${esc(m.fromName || "班主任")} · 班级广播</div>` +
-      (m.text ? renderRich(m.text, classMembersOf().map(x => x.name)) : "") +
+      (m.text ? renderRich(m.text, classMembersOf().map(x => x.name)) + transHtml(m.text) : "") +
       bcMediaHtml(m) + `<div class="mt">${fmtTime(m.at || Date.now())}</div>`;
     bindBcZoom(d);
   } else {
     d.className = "msg" + (mine ? " mine" : "");
     const nm = m.from === me.uid ? "我" : (m.fromName || m.byName || "同学");
-    d.innerHTML = `<div class="mname">${esc(nm)}</div>${m.kind === "gif" ? gifBodyHtml(m, mine) : renderRich(m.text, classMembersOf().map(x => x.name))}<div class="mt">${fmtTime(m.at || Date.now())}</div>`;
+    d.innerHTML = `<div class="mname">${esc(nm)}</div>${m.kind === "gif" ? gifBodyHtml(m, mine) : renderRich(m.text, classMembersOf().map(x => x.name)) + transHtml(m.text)}<div class="mt">${fmtTime(m.at || Date.now())}</div>`;
     bindGifSave(d);
   }
   log.appendChild(d);
@@ -373,7 +412,20 @@ function syncParentClass() {
   if (!client || !client.connected) return;
   if (pcTopic) { try { client.unsubscribe(pcTopic); } catch (e) {} }
   pcTopic = parentClass ? `${APP}/pc/${me.school}/${parentClass.grade}/${parentClass.cls}` : "";
-  if (pcTopic) client.subscribe(pcTopic);
+  if (pcTopic) { client.subscribe(pcTopic); restorePcMsgs(); }
+}
+/* 家长群消息本地缓存 */
+const PC_CACHE_MAX = 200;
+function pcCacheKey() { return `${APP}_pccache_${me.school}_${parentClass ? parentClass.grade + parentClass.cls : ""}`; }
+function savePcMsgs() {
+  try { localStorage.setItem(pcCacheKey(), JSON.stringify(pcMsgs.slice(-PC_CACHE_MAX))); } catch (e) {}
+}
+function restorePcMsgs() {
+  const log = $("pcLog"); if (!log) return;
+  log.innerHTML = "";
+  try { pcMsgs = JSON.parse(localStorage.getItem(pcCacheKey()) || "[]"); } catch (e) { pcMsgs = []; }
+  pcMsgs.forEach(m => appendPcMsgDOM(m, m.from === me.uid));
+  log.scrollTop = log.scrollHeight;
 }
 /* 本班全体家长（孩子在该班的 parent 成员） */
 function parentMembersOf() {
@@ -413,12 +465,18 @@ function onPcMsg(m) {
   else if (m.t === "bc") appendPcMsg(m, false);
 }
 function appendPcMsg(m, mine) {
+  pcMsgs.push(m);
+  if (pcMsgs.length > PC_CACHE_MAX) pcMsgs.shift();
+  savePcMsgs();
+  appendPcMsgDOM(m, mine);
+}
+function appendPcMsgDOM(m, mine) {
   const log = $("pcLog"); if (!log) return;
   const d = document.createElement("div");
   if (m.t === "bc") {
     d.className = "msg bc";
     d.innerHTML = `<div class="bchead">📢 ${esc(m.fromName || "班主任")} · 班级广播</div>` +
-      (m.text ? renderRich(m.text, parentMembersOf().map(x => x.name)) : "") +
+      (m.text ? renderRich(m.text, parentMembersOf().map(x => x.name)) + transHtml(m.text) : "") +
       bcMediaHtml(m) + `<div class="mt">${fmtTime(m.at || Date.now())}</div>`;
     bindBcZoom(d);
     log.appendChild(d);
@@ -428,7 +486,7 @@ function appendPcMsg(m, mine) {
   }
   d.className = "msg" + (mine ? " mine" : "");
   const nm = m.from === me.uid ? "我" : (pcNameOf(m.fromName || ""));
-  d.innerHTML = `<div class="mname">${esc(nm)}</div>${m.kind === "gif" ? gifBodyHtml(m, mine) : renderRich(m.text, parentMembersOf().map(x => x.name))}<div class="mt">${fmtTime(m.at || Date.now())}</div>`;
+  d.innerHTML = `<div class="mname">${esc(nm)}</div>${m.kind === "gif" ? gifBodyHtml(m, mine) : renderRich(m.text, parentMembersOf().map(x => x.name)) + transHtml(m.text)}<div class="mt">${fmtTime(m.at || Date.now())}</div>`;
   bindGifSave(d);
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
@@ -1930,6 +1988,11 @@ function renderGoals() {
 /* 系统更新日志：由 AI 开发者在代码里直接写入，记录新功能、用法说明等，所有人可见 */
 const CHANGELOG = [
   {
+    v: "1.4.0", date: "2026-10-15",
+    title: "🔔 新增「通知」页面（默认首个 tab）",
+    body: "新增「🔔 通知」tab，默认打开主页时第一个显示。老师 / 管理员可发布通知（文字 + 图片，图片自动压缩）；学生和家长可查看、点赞、评论。通知全校可见，离线进入也能看到最新内容。"
+  },
+  {
     v: "1.3.0", date: "2026-10-12",
     title: "📚 新增 LMS 自学页面 + 📰 更新日志",
     body: "新增「LMS 自学」tab（所有人可见），后续将支持自学计划、学习资源等功能。\n新增「更新日志」tab，系统每次更新都会在这里说明新功能和用法。"
@@ -1956,11 +2019,146 @@ function renderFeed() {
       `<p style="margin:8px 0 0;white-space:pre-wrap;line-height:1.6">${esc(it.body)}</p></div>`;
   }).join("");
 }
+/* ================= 通知（教师发布 · 学生/家长查看、点赞、评论） ================= */
+/* retained APP/notif/<校>：{name, items:[{id,by,byName,text,imgs:[dataURL],at,likes:[姓名],comments:[{by,byName,text,at}]}]}，新的在前 */
+let notifMedia = [];        // 待发布图片 dataURL 列表
+let notifDrafts = {};       // {帖子id: 正在输入的评论草稿}，避免重渲染时丢失输入
+const NOTIF_IMG_MAX = 9;
+const NOTIF_TOPIC = () => `${APP}/notif/${me.school}`;
+/* 读取通知 topic 现状；probeDoc 会临时退订，通知需长期订阅，故探测后立即恢复订阅 */
+async function notifProbe() {
+  const fresh = await notifProbe();
+  try { if (client && client.connected) client.subscribe(NOTIF_TOPIC()); } catch (e) {}
+  return fresh;
+}
+/* 谁能发布通知：教师 / 管理员 */
+function canPostNotif() { return me.role === "teacher" || me.role === "admin"; }
+/* 渲染通知列表 */
+function renderNotif() {
+  const postCard = $("notifPostCard");
+  if (postCard) postCard.classList.toggle("hidden", !canPostNotif());
+  const box = $("notifBox"); if (!box) return;
+  const items = (notifDoc && Array.isArray(notifDoc.items)) ? notifDoc.items : [];
+  if (!items.length) { box.innerHTML = '<p class="muted">还没有通知。' + (canPostNotif() ? "老师可以在上方发布。" : "老师发布后会显示在这里。") + '</p>'; return; }
+  box.innerHTML = items.map(it => {
+    const likes = Array.isArray(it.likes) ? it.likes : [];
+    const liked = likes.includes(me.name);
+    const cmts = Array.isArray(it.comments) ? it.comments : [];
+    const imgs = Array.isArray(it.imgs) ? it.imgs.filter(Boolean) : [];
+    const id = escAttr(it.id);
+    const imgHtml = imgs.length ? '<div class="bcimgs">' + imgs.map(d => `<img class="bcimg" src="${esc(d)}" loading="lazy" alt="通知图片">`).join("") + "</div>" : "";
+    const cmtHtml = cmts.length ? cmts.map(c => `<div class="nc"><b>${esc(c.byName || c.by || "用户")}</b>：${esc(c.text)} <span class="muted" style="font-size:11px">${fmtTime(c.at || 0)}</span></div>`).join("") : '<span class="muted" style="font-size:12px">还没有评论</span>';
+    return `<div class="notif-item" data-id="${id}">
+      <div class="nh"><b>${esc(it.byName || it.by || "老师")}</b><span class="muted">${fmtTime(it.at || Date.now())}</span></div>
+      ${it.text ? `<div class="nbody">${esc(it.text)}</div>` : ""}
+      ${imgHtml}
+      <div class="nacts">
+        <button type="button" class="likebtn${liked ? " liked" : ""}" data-like="${id}">${liked ? "❤" : "🤍"} ${likes.length}</button>
+        <span>💬 ${cmts.length}</span>
+      </div>
+      <div class="notif-comments">
+        ${cmtHtml}
+        <div class="notif-cinput">
+          <input type="text" class="cinput" data-cmt="${id}" placeholder="写评论…" maxlength="200" value="${escAttr(notifDrafts[it.id] || "")}">
+          <button type="button" class="primary cbtn" data-cmtbtn="${id}">发送</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+  box.querySelectorAll("button.likebtn").forEach(b => { b.onclick = () => notifToggleLike(b.dataset.like); });
+  box.querySelectorAll("input.cinput").forEach(inp => {
+    inp.oninput = () => { notifDrafts[inp.dataset.cmt] = inp.value; };
+    inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); notifAddComment(inp.dataset.cmt, inp.value); } };
+  });
+  box.querySelectorAll("button.cbtn").forEach(b => {
+    b.onclick = () => { const inp = box.querySelector(`input[data-cmt="${b.dataset.cmtbtn}"]`); notifAddComment(b.dataset.cmtbtn, inp ? inp.value : ""); };
+  });
+  bindBcZoom(box);  // 图片点击放大（复用广播的遮罩）
+}
+/* 发布通知：probeDoc 先取现状再合并，避免覆盖他人已发布的通知 */
+async function submitNotif() {
+  if (!canPostNotif()) { toast("只有教师 / 管理员可以发布通知", "warn"); return; }
+  const text = $("notifText").value.trim();
+  if (!text && !notifMedia.length) { toast("请填写通知内容或添加图片", "warn"); return; }
+  if (text.length > 600) { toast("通知内容过长（≤600 字）", "warn"); return; }
+  const fresh = await notifProbe();
+  const base = (fresh && Array.isArray(fresh.items)) ? fresh : (notifDoc && Array.isArray(notifDoc.items)) ? notifDoc : { name: me.school, items: [] };
+  const items = base.items.slice();
+  items.unshift({
+    id: Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+    by: me.name, byName: me.name, text, imgs: notifMedia.slice(), at: Date.now(), likes: [], comments: []
+  });
+  if (items.length > 60) items.length = 60;   // 最多保留 60 条
+  notifDoc = { name: me.school, items };
+  notifMedia = [];
+  $("notifText").value = ""; renderNotifPreviews();
+  client.publish(NOTIF_TOPIC(), JSON.stringify(notifDoc), { retain: true, qos: 1 });
+  renderNotif();
+  toast("通知已发布，全校可见", "ok", 4000);
+}
+/* 点赞 / 取消点赞（同一条通知，第二次点击即取消） */
+async function notifToggleLike(id) {
+  const fresh = await notifProbe();
+  const base = (fresh && Array.isArray(fresh.items)) ? fresh : notifDoc;
+  if (!base || !Array.isArray(base.items)) return;
+  const it = base.items.find(x => x && x.id === id); if (!it) return;
+  const likes = Array.isArray(it.likes) ? it.likes.slice() : [];
+  const i = likes.indexOf(me.name);
+  if (i >= 0) likes.splice(i, 1); else likes.push(me.name);
+  it.likes = likes;
+  notifDoc = { name: me.school, items: base.items };
+  client.publish(NOTIF_TOPIC(), JSON.stringify(notifDoc), { retain: true, qos: 1 });
+  renderNotif();
+}
+/* 发表评论 */
+async function notifAddComment(id, text) {
+  text = (text || "").trim();
+  if (!text) return;
+  if (text.length > 200) { toast("评论过长（≤200 字）", "warn"); return; }
+  const fresh = await notifProbe();
+  const base = (fresh && Array.isArray(fresh.items)) ? fresh : notifDoc;
+  if (!base || !Array.isArray(base.items)) return;
+  const it = base.items.find(x => x && x.id === id); if (!it) return;
+  const cmts = Array.isArray(it.comments) ? it.comments.slice() : [];
+  cmts.push({ by: me.name, byName: me.name, text, at: Date.now() });
+  it.comments = cmts.slice(-100);
+  notifDrafts[id] = "";
+  notifDoc = { name: me.school, items: base.items };
+  client.publish(NOTIF_TOPIC(), JSON.stringify(notifDoc), { retain: true, qos: 1 });
+  renderNotif();
+}
+/* 发布前的图片预览 */
+function renderNotifPreviews() {
+  const box = $("notifPreviews"); if (!box) return;
+  box.innerHTML = "";
+  notifMedia.forEach((d, i) => {
+    const el = document.createElement("div");
+    el.className = "pp";
+    el.innerHTML = `<img src="${d}" alt="预览"><button type="button" title="移除">×</button>`;
+    el.querySelector("button").onclick = () => { notifMedia.splice(i, 1); renderNotifPreviews(); };
+    box.appendChild(el);
+  });
+  const note = $("notifNote");
+  if (note) note.textContent = notifMedia.length ? `已选 ${notifMedia.length} 张图` : "";
+}
+/* 逐张读图（复用广播的压缩逻辑：GIF 原样，其余缩到 ≤1600px 转 JPEG） */
+async function notifAddFiles(files) {
+  for (const f of Array.from(files || [])) {
+    if (notifMedia.length >= NOTIF_IMG_MAX) { toast(`图片最多 ${NOTIF_IMG_MAX} 张`, "warn", 4000); break; }
+    const r = await bcReadImage(f);
+    if (r.ok && r.k === "img") notifMedia.push(r.d);
+    else toast(`${f.name}：${r.err || "无法添加"}`, "warn", 5000);
+  }
+  renderNotifPreviews();
+}
+$("notifPickBtn").onclick = () => $("notifFile").click();
+$("notifFile").onchange = () => { notifAddFiles($("notifFile").files); $("notifFile").value = ""; };
+$("notifSendBtn").onclick = () => submitNotif();
 /* ================= 退出 / 启动 ================= */
 $("logoutBtn").onclick = () => {
   if (client) { try { client.publish(`${APP}/u/${me.name}/${me.dev}`, JSON.stringify({ uid: me.uid, dev: me.dev, online: false }), { retain: true }); client.end(true); } catch (e) {} }
   LS.clearSession();
-  location.href = "index.html";
+  location.href = "signin.html";
 };
 window.addEventListener("beforeunload", () => {
   try { if (client && me.name) client.publish(`${APP}/u/${me.name}/${me.dev}`, JSON.stringify({ uid: me.uid, dev: me.dev, online: false }), { retain: true }); } catch (e) {}

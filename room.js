@@ -3,7 +3,7 @@
 const sess = LS.session();
 if (!sess || !sess.name || !sess.uid) {
   try { sessionStorage.removeItem(APP + "_launch"); } catch (e) {}
-  location.replace("index.html");
+  location.replace("signin.html");
 }
 let me = { uid: sess ? sess.uid : "", name: sess ? sess.name : "", dev: LS.devid(), school: sess ? (sess.school || "") : "", role: sess ? (sess.role || "") : "" };
 if (me.role === "parent") {

@@ -1,7 +1,7 @@
 "use strict";
 /* ================= 嘻嗨校园 · 学生会群（student_council.html） ================= */
 const sess = LS.session();
-if (!sess || !sess.name || !sess.uid) { location.replace("index.html"); }
+if (!sess || !sess.name || !sess.uid) { location.replace("signin.html"); }
 let me = { uid: sess ? sess.uid : "", name: sess ? sess.name : "", dev: LS.devid(), school: sess ? (sess.school || "") : "", role: sess ? (sess.role || "") : "" };
 let client = null;
 let schoolRec = null;

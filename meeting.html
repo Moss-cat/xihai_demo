@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>会议室 · 嘻嗨校园</title>
+<link rel="icon" href="icon_no_white.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
 <script>if (typeof mqtt === "undefined") document.write('<script src="https:\/\/unpkg.com\/mqtt@4.3.7\/dist\/mqtt.min.js"><\/script>');</script>
 <script src="i18n.js"></script>
@@ -24,6 +25,10 @@ button:disabled{opacity:.45;cursor:not-allowed}
 #scr-meet{position:fixed;inset:0;display:flex;flex-direction:column}
 #scr-meet header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;font-size:14px}
 #scr-meet header .grow{flex:1}
+#scr-meet header .logo{display:inline-flex;align-items:center;gap:7px}
+#scr-meet header .logo .logo-icon{height:24px;width:auto;display:block}
+#scr-meet header .logo .logo-word{height:15px;width:auto;display:block}
+[data-theme="dark"] .logo-word{filter:invert(1)}
 #connState{font-size:12px;color:var(--sub)}
 #meetBody{flex:1;display:flex;overflow:hidden;position:relative}
 #videoGrid{flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;padding:12px;overflow-y:auto;align-content:start}
@@ -63,6 +68,7 @@ footer.ctrl{display:flex;gap:10px;justify-content:center;align-items:center;padd
 <div id="approveBox"></div>
 <div id="scr-meet">
   <header>
+    <span class="logo"><img class="logo-icon" src="icon_no_white.png" alt="嘻嗨校园"><img class="logo-word" src="WORD.png" alt="XiHai"></span>
     <b id="meetTitle"></b>
     <span class="muted">会议码 <b id="meetCode"></b></span>
     <span class="muted" id="meetCount"></span>

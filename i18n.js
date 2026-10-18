@@ -34,6 +34,8 @@
     "登录 · 嘻嗨校园": "Login · XiHai Campus",
     "会议室 · 嘻嗨校园": "Meeting Room · XiHai Campus",
     "学生会群 · 嘻嗨校园": "Student Council · XiHai Campus",
+    "西嗨校园，让学校更简单！": "XiHai Campus — making school simpler!",
+    "进入校园": "Enter Campus",
     "切换账号": "Switch Account",
     "群组": "Groups",
     "我的班级群": "My Class Group",
@@ -511,7 +513,7 @@
     "已批准": "Approved ",
     "的会议申请，会议已发布到群里": "'s meeting request — posted to the group",
 
-    /* ---- 登录 / 注册（index.html） ---- */
+    /* ---- 登录 / 注册（signin.html） ---- */
     "① 学校": "① School",
     "② 身份": "② Role",
     "③ 登录": "③ Login",

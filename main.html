@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>嘻嗨校园</title>
+<link rel="icon" href="icon_no_white.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
 <script>if (typeof mqtt === "undefined") document.write('<script src="https:\/\/unpkg.com\/mqtt@4.3.7\/dist\/mqtt.min.js"><\/script>');</script>
 <script src="i18n.js"></script>
@@ -28,7 +29,10 @@ textarea{resize:vertical;font-family:inherit}
 .muted{color:var(--sub);font-size:12px}
 .screen{position:fixed;inset:0;display:flex;flex-direction:column}
 header.top{display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
-header.top .logo{font-weight:bold;font-size:16px}
+header.top .logo{display:inline-flex;align-items:center;gap:7px;font-weight:bold;font-size:16px}
+header.top .logo .logo-icon{height:24px;width:auto;display:block}
+header.top .logo .logo-word{height:15px;width:auto;display:block}
+[data-theme="dark"] .logo-word{filter:invert(1)}
 header.top .who{color:var(--sub);font-size:12px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 header.top .grow{flex:1}
 header.top select{width:auto;padding:4px 8px;font-size:12px;background:var(--panel2)}
@@ -65,6 +69,7 @@ main{padding:18px 20px;overflow-y:auto}
 .msg.mine{align-self:flex-end;background:rgba(79,140,255,.14);border-color:rgba(79,140,255,.4)}
 .msg .mname{font-size:11px;color:var(--sub);margin-bottom:3px}
 .msg .mt{font-size:11px;color:var(--sub);margin-top:4px;text-align:right}
+.msg .trans{font-size:12px;color:var(--sub);margin-top:5px;padding-top:5px;border-top:1px dashed var(--line);line-height:1.5}
 .msg.call{border-left:4px solid var(--accent);max-width:92%;align-self:center;width:100%}
 .msg.call .cbtns{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
 /* 班级广播：老师发到全班学生+家长的媒体消息 */
@@ -122,6 +127,19 @@ main{padding:18px 20px;overflow-y:auto}
 .toast textarea{width:100%;margin-top:8px;background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px;font-size:12px;resize:vertical;min-height:52px;font-family:inherit}
 @keyframes slidein{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
 #gateOverlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+/* 通知（教师发布 · 学生/家长查看） */
+.notif-item{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+.notif-item .nh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.notif-item .nbody{margin-top:6px;white-space:pre-wrap;line-height:1.55;word-break:break-word}
+.notif-item .nacts{display:flex;gap:14px;align-items:center;margin-top:8px;font-size:13px;color:var(--sub);flex-wrap:wrap}
+.notif-item .nacts button{padding:4px 12px;font-size:13px;border-radius:999px}
+.notif-item .nacts button.liked{color:#e5484d;border-color:#e5484d;background:rgba(229,72,77,.08)}
+.notif-comments{margin-top:8px;border-top:1px dashed var(--line);padding-top:8px}
+.notif-comments .nc{font-size:13px;padding:3px 0;word-break:break-word;line-height:1.5}
+.notif-comments .nc b{color:var(--accent)}
+.notif-cinput{display:flex;gap:6px;margin-top:8px}
+.notif-cinput input{flex:1;margin:0;padding:6px 9px;font-size:13px}
+.notif-cinput button{padding:5px 12px;font-size:12px;flex:none}
 @media(max-width:900px){.main-grid{grid-template-columns:1fr}aside{display:none}}
 </style>
 </head>
@@ -130,7 +148,7 @@ main{padding:18px 20px;overflow-y:auto}
 <div id="gateOverlay" class="hidden"><b style="font-size:18px">请先登录</b><p class="muted">正在跳转到登录页…</p></div>
 <div id="scr-main" class="screen hidden">
   <header class="top">
-    <span class="logo">🏫 嘻嗨校园</span>
+    <span class="logo"><img class="logo-icon" src="icon_no_white.png" alt="嘻嗨校园"><img class="logo-word" src="WORD.png" alt="XiHai"></span>
     <span class="who" id="myNameLabel"></span>
     <span class="grow"></span>
     <span class="who" id="connState">连接中…</span>
@@ -152,7 +170,8 @@ main{padding:18px 20px;overflow-y:auto}
     </aside>
     <main>
       <div class="tabs" id="tabbar">
-        <button data-tab="meet" id="tbMeet" class="on" data-t="tab.meet">🎥 视频通话</button>
+        <button data-tab="notif" id="tbNotif" class="on" data-t="tab.notif">🔔 通知</button>
+        <button data-tab="meet" id="tbMeet" data-t="tab.meet">🎥 视频通话</button>
         <button data-tab="class" id="tbClass" class="hidden" data-t="tab.class">🏫 班级群</button>
         <button data-tab="broadcast" id="tbBroadcast" class="hidden" data-t="tab.broadcast">📢 班级广播</button>
         <button data-tab="parent" id="tbParent" class="hidden" data-t="tab.parent">👪 家长群</button>
@@ -165,6 +184,24 @@ main{padding:18px 20px;overflow-y:auto}
         <button data-tab="tt" id="tbTt" class="hidden" data-t="tab.tt">📅 课表</button>
         <button data-tab="stu" id="tbStu" class="hidden" data-t="tab.stu">👥 学生管理</button>
         <button data-tab="school" id="tbSchool" class="hidden" data-t="tab.school">🏫 学校管理</button>
+      </div>
+      <!-- 通知（教师发布 · 学生/家长查看、点赞、评论） -->
+      <div id="tabNotif">
+        <div class="card hidden" id="notifPostCard">
+          <h3>🔔 发布通知 <span class="sub">（教师 / 管理员）</span></h3>
+          <textarea id="notifText" placeholder="通知内容…（可只发图片）" maxlength="600" rows="3"></textarea>
+          <div class="pt-row" style="flex-wrap:wrap">
+            <input type="file" id="notifFile" accept="image/*" multiple style="display:none">
+            <button id="notifPickBtn" class="ghost" style="flex:none">🖼 添加图片（≤9 张，自动压缩）</button>
+            <span class="muted" id="notifNote" style="flex:1"></span>
+            <button id="notifSendBtn" class="primary" style="flex:none">📢 发布通知</button>
+          </div>
+          <div class="bc-prev" id="notifPreviews"></div>
+        </div>
+        <div class="card">
+          <h3>🔔 校园通知 <span class="sub">（教师发布 · 学生 / 家长可点赞、评论）</span></h3>
+          <div id="notifBox"></div>
+        </div>
       </div>
       <!-- 视频通话 -->
       <div id="tabMeet">

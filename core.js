@@ -1,6 +1,6 @@
 "use strict";
-/* ================= 嘻嗨校园 · 多页面共享核心（index/main/meeting/student_council 共用） ================= */
-/* 常量必须与 index.html 保持一致 */
+/* ================= 嘻嗨校园 · 多页面共享核心（signin/main/meeting/student_council 共用） ================= */
+/* 常量必须与 signin.html 保持一致 */
 window.APP = "vcmeet2026";
 window.BROKER = "wss://broker.hivemq.com:8884/mqtt";
 window.ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
@@ -85,7 +85,7 @@ function launchMeeting(cfg) {
   sessionStorage.setItem(APP + "_launch", JSON.stringify(cfg));
   location.href = "meeting.html";
 }
-/* 密码哈希（与 index.html 逐字节一致） */
+/* 密码哈希（与 signin.html 逐字节一致） */
 async function hashPw(name, pw) {
   const src = APP + "|" + name + "|" + pw;
   if (window.isSecureContext && window.crypto && crypto.subtle) {

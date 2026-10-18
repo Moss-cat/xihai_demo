@@ -5,7 +5,7 @@ bindLang({});
 const sess = LS.session();
 if (!sess || !sess.name || !sess.uid) {
   $("gateOverlay").classList.remove("hidden");
-  location.replace("index.html");
+  location.replace("signin.html");
 }
 const me = { uid: sess ? sess.uid : "", name: sess ? sess.name : "", dev: LS.devid(), school: sess ? (sess.school || "") : "", role: sess ? (sess.role || "") : "" };
 let client = null;
