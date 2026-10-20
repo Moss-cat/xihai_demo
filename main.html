@@ -61,6 +61,17 @@ main{padding:18px 20px;overflow-y:auto}
 .card h3{font-size:15px;margin-bottom:12px}
 .card h3 .sub{font-weight:normal;font-size:12px;color:var(--sub)}
 .card input,.card select,.card textarea{margin-bottom:10px}
+/* LMS 自学视频 */
+.lms-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.lms-bar button{padding:6px 12px;font-size:13px}
+.lms-bar button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.lms-lx{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin:10px 0}
+.lms-lx .lx{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;font-size:13px;line-height:1.5}
+.lms-lx .lx:hover{border-color:var(--accent)}
+.lms-lx .lx .ln{color:var(--sub);font-size:11px;margin-bottom:4px}
+.lms-player{margin-top:14px}
+.lms-player video{width:100%;border-radius:12px;background:#000}
+.lms-player .vttl{margin-top:10px;font-size:15px;font-weight:bold}
 .empty{color:var(--sub);font-size:13px;padding:6px 0}
 /* 班级群 / 群聊 */
 .chatbox{display:flex;flex-direction:column;height:min(58vh,560px);background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
@@ -527,8 +538,14 @@ main{padding:18px 20px;overflow-y:auto}
       <!-- LMS 自学 -->
       <div id="tabLms" class="hidden">
         <div class="card">
-          <h3>📚 LMS · 自学</h3>
-          <p class="muted">这里将放置自学计划、学习资源等内容，敬请期待。</p>
+          <h3>📚 LMS · 自学视频</h3>
+          <div id="lmsGrade" class="lms-bar"></div>
+          <div id="lmsUnit" class="lms-bar"></div>
+          <div id="lmsList" class="empty">加载中…</div>
+          <div id="lmsPlayer" class="lms-player hidden">
+            <video id="lmsVideo" controls></video>
+            <div class="vttl" id="lmsVideoTitle"></div>
+          </div>
         </div>
       </div>
       <!-- 更新日志（系统公告） -->

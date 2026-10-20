@@ -9,15 +9,13 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{background:#ffffff;color:#1a2238;font-family:"Microsoft YaHei",system-ui,sans-serif;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.landing{display:flex;flex-direction:column;align-items:center;text-align:center;gap:24px;padding:36px;animation:fade .6s ease}
+body{background:#ffffff;color:#1a2238;font-family:"Microsoft YaHei",system-ui,sans-serif;display:flex;align-items:center;justify-content:center;overflow:hidden;opacity:1;transition:opacity .7s ease}
+body.fadeout{opacity:0}
+.landing{display:flex;flex-direction:column;align-items:center;text-align:center;gap:26px;padding:36px;animation:fade .6s ease}
 .brand{display:flex;align-items:center;gap:24px}
 .brand .logo-icon{height:clamp(150px,24vw,260px);width:auto;display:block}
 .brand .logo-word{height:clamp(58px,9vw,98px);width:auto;display:block}
-.slogan{font-family:"Kaiti SC","STKaiti","KaiTi","楷体",cursive;font-size:clamp(22px,4vw,40px);letter-spacing:2px;color:#33406b}
-.enter{margin-top:6px;padding:15px 56px;font-size:17px;border:none;border-radius:999px;background:linear-gradient(135deg,#7a5cff,#4f8cff);color:#fff;cursor:pointer;box-shadow:0 12px 30px rgba(79,140,255,.35);transition:transform .15s,box-shadow .15s;font-family:inherit}
-.enter:hover{transform:translateY(-2px);box-shadow:0 16px 38px rgba(79,140,255,.45)}
-.enter:active{transform:translateY(0)}
+.slogan{font-family:"FZShuTi","方正舒体","Kaiti SC","STKaiti","KaiTi",cursive;font-size:clamp(22px,4vw,40px);letter-spacing:2px;color:#33406b}
 @keyframes fade{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 </style>
 </head>
@@ -28,7 +26,13 @@ body{background:#ffffff;color:#1a2238;font-family:"Microsoft YaHei",system-ui,sa
     <img class="logo-word" src="WORD.png" alt="XiHai">
   </div>
   <p class="slogan">西嗨校园，让学校更简单！</p>
-  <button class="enter" onclick="location.href='signin.html'">进入校园 →</button>
 </div>
+<script>
+/* 停留 1 秒后缓慢变浅，随后自动进入登录页；登录页会自动转发到主页（已登录时） */
+setTimeout(function () {
+  document.body.classList.add("fadeout");
+  setTimeout(function () { location.replace("signin.html"); }, 700);
+}, 1000);
+</script>
 </body>
 </html>

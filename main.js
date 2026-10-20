@@ -252,10 +252,99 @@ function showTab(t) {
     if (el) el.classList.toggle("hidden", n !== t);
   });
   document.querySelectorAll("#tabbar button").forEach(b => { if (!b.classList.contains("hidden")) b.classList.toggle("on", b.dataset.tab === t); });
+  if (t === "lms") loadLms();
 }
 document.querySelectorAll("#tabbar button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 $("navClass").onclick = () => { showTab("class"); };
 $("navCouncil").onclick = () => { location.href = "student_council.html"; };
+/* ================= LMS 自学视频 ================= */
+let lmsData = null;
+let lmsGradeCur = null;
+let lmsUnitCur = null;
+function splitCamel(s) {
+  return String(s)
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function lxNum(name) {
+  const m = String(name).match(/^L(\d+)/i);
+  return m ? parseInt(m[1], 10) : 9999;
+}
+async function loadLms() {
+  const listEl = $("lmsList");
+  if (lmsData) { renderLmsGrades(); return; }
+  listEl.className = "empty"; listEl.textContent = "加载中…";
+  try {
+    const r = await fetch("videos/videos.json?t=" + Date.now());
+    if (!r.ok) throw new Error("no manifest");
+    lmsData = await r.json();
+  } catch (e) {
+    listEl.textContent = "暂无视频资源（videos/videos.json 未找到，或视频尚未上传）。";
+    return;
+  }
+  renderLmsGrades();
+}
+function renderLmsGrades() {
+  const grades = Object.keys(lmsData || {});
+  const bar = $("lmsGrade");
+  bar.innerHTML = "";
+  if (!grades.length) { $("lmsList").className = "empty"; $("lmsList").textContent = "暂无年级。"; return; }
+  grades.forEach(g => {
+    const b = document.createElement("button");
+    b.textContent = g;
+    b.onclick = () => lmsSelectGrade(g);
+    bar.appendChild(b);
+  });
+  lmsSelectGrade(lmsGradeCur && lmsData[lmsGradeCur] ? lmsGradeCur : grades[0]);
+}
+function lmsSelectGrade(g) {
+  lmsGradeCur = g;
+  Array.from($("lmsGrade").children).forEach(c => c.classList.toggle("on", c.textContent === g));
+  const units = Object.keys(lmsData[g] || {});
+  const bar = $("lmsUnit");
+  bar.innerHTML = "";
+  $("lmsPlayer").classList.add("hidden");
+  if (!units.length) { $("lmsList").className = "empty"; $("lmsList").textContent = "该年级暂无单元。"; return; }
+  units.forEach(u => {
+    const b = document.createElement("button");
+    b.textContent = u;
+    b.onclick = () => lmsSelectUnit(u);
+    bar.appendChild(b);
+  });
+  lmsSelectUnit(lmsUnitCur && lmsData[g][lmsUnitCur] ? lmsUnitCur : units[0]);
+}
+function lmsSelectUnit(u) {
+  lmsUnitCur = u;
+  Array.from($("lmsUnit").children).forEach(c => c.classList.toggle("on", c.textContent === u));
+  const items = (lmsData[lmsGradeCur] && lmsData[lmsGradeCur][u]) || [];
+  const listEl = $("lmsList");
+  listEl.innerHTML = "";
+  $("lmsPlayer").classList.add("hidden");
+  if (!items.length) { listEl.className = "empty"; listEl.textContent = "该单元暂无课程。"; return; }
+  listEl.className = "lms-lx";
+  items.slice().sort((a, b) => lxNum(a.name) - lxNum(b.name)).forEach(it => {
+    const d = document.createElement("div");
+    d.className = "lx";
+    const m = String(it.name).match(/^L(\d+)/i);
+    const ln = m ? "L" + m[1] : "";
+    const tail = String(it.name).replace(/^L\d+[-_]?/i, "");
+    d.innerHTML = (ln ? `<div class="ln">${ln}</div>` : "") + `<div>${esc(splitCamel(tail))}</div>`;
+    d.onclick = () => lmsPlay(it);
+    listEl.appendChild(d);
+  });
+}
+function lmsPlay(it) {
+  const v = $("lmsVideo");
+  v.src = it.file;
+  v.play().catch(() => {});
+  const m = String(it.name).match(/^L(\d+)/i);
+  const tail = String(it.name).replace(/^L\d+[-_]?/i, "");
+  $("lmsVideoTitle").textContent = (m ? "L" + m[1] + " · " : "") + splitCamel(tail);
+  $("lmsPlayer").classList.remove("hidden");
+}
 /* ================= 班级群 ================= */
 function classMembersOf() {
   if (!myClass || !schoolRec) return [];
